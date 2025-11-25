@@ -54,6 +54,17 @@ if st.button("Procesar"):
         df_prod = normalize_columns(load(produccion))
         df_comp = normalize_columns(load(componentes))
 
+
+        def fix_duplicate_columns(df):
+    """Asigna nombres únicos a columnas duplicadas."""
+    cols = pd.Series(df.columns)
+    for dup in cols[cols.duplicated()].unique():
+        dup_idx = cols[cols == dup].index.tolist()
+        for i, idx in enumerate(dup_idx):
+            cols[idx] = f"{dup}_{i+1}"
+    df.columns = cols
+    return df
+
         # -------------------------
         # Detectar columnas de Orden
         # -------------------------
