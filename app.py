@@ -1,53 +1,127 @@
 import streamlit as st
 import pandas as pd
+import re
 
 st.title("Analisis de Producción: Tiempos y Materiales")
+st.write("Subí los 4 archivos: tiempos reales, tiempos informados, producción y componentes.")
 
-st.write("Subí los archivos: tiempos reales, tiempos informados, produccion y componentes.")
+# -------------------------
+# Funciones de soporte
+# -------------------------
+
+def load(f):
+    if f is None:
+        return None
+    if f.name.endswith(".csv"):
+        return pd.read_csv(f)
+    return pd.read_excel(f)
+
+def normalize_columns(df):
+    df = df.copy()
+    df.columns = (
+        df.columns.str.lower()
+        .str.strip()
+        .str.replace("\n", " ")
+        .str.replace("  +", " ", regex=True)
+    )
+    return df
+
+def find_order_column(df):
+    posibles = ["orden", "order", "ord", "orden de produccion", "orden de fabricación"]
+
+    for col in df.columns:
+        c = col.lower().strip()
+        if any(p in c for p in posibles):
+            return col
+
+    return None  # no se encontró
+
+# -------------------------
+# Subida de archivos
+# -------------------------
 
 tiempos_reales = st.file_uploader("Tiempos reales", type=["xlsx","csv"])
 tiempos_inf = st.file_uploader("Tiempos informados", type=["xlsx","csv"])
-produccion = st.file_uploader("Produccion", type=["xlsx","csv"])
+produccion = st.file_uploader("Producción", type=["xlsx","csv"])
 componentes = st.file_uploader("Componentes", type=["xlsx","csv"])
 
 if st.button("Procesar"):
-    def load(f):
-        if f.name.endswith('.csv'): return pd.read_csv(f)
-        return pd.read_excel(f)
 
-    df_real = load(tiempos_reales)
-    df_inf = load(tiempos_inf)
-    df_prod = load(produccion)
-    df_comp = load(componentes)
+    try:
+        # Cargar
+        df_real = normalize_columns(load(tiempos_reales))
+        df_inf  = normalize_columns(load(tiempos_inf))
+        df_prod = normalize_columns(load(produccion))
+        df_comp = normalize_columns(load(componentes))
 
-    # rename heuristic
-    real_col = 'tiempo de máquina'
-    inf_col = 'activ.1 notificada'
+        # -------------------------
+        # Detectar columnas de Orden
+        # -------------------------
+        ord_real = find_order_column(df_real)
+        ord_inf  = find_order_column(df_inf)
+        ord_prod = find_order_column(df_prod)
+        ord_comp = find_order_column(df_comp)
 
-    df_time = pd.merge(df_real, df_inf, on='Orden', how='outer', suffixes=('_real','_inf'))
-    df_time['time_diff'] = df_time[real_col] - df_time[inf_col]
+        if None in [ord_real, ord_inf, ord_prod, ord_comp]:
+            st.error("❌ No se pudo identificar la columna de Orden en todos los archivos.")
+            st.write("Encontrado:")
+            st.write(f"Tiempos reales: {ord_real}")
+            st.write(f"Tiempos informados: {ord_inf}")
+            st.write(f"Producción: {ord_prod}")
+            st.write(f"Componentes: {ord_comp}")
+            st.stop()
 
-    def action(row):
-        if pd.isna(row[real_col]): return 'falta_medicion_real'
-        if pd.isna(row[inf_col]): return 'informar_tiempo_en_SAP'
-        if row['time_diff'] > 0: return 'aumentar_tiempo_en_SAP'
-        if row['time_diff'] < 0: return 'reducir_tiempo_informado_en_SAP'
-        return 'ok'
+        # -------------------------
+        # Comparación de tiempos
+        # -------------------------
 
-    df_time['accion'] = df_time.apply(action, axis=1)
-    st.subheader("Resultado Tiempos")
-    st.dataframe(df_time)
+        # Detectar columnas de tiempo
+        col_real_time = [c for c in df_real.columns if "maquina" in c or "máquina" in c or "tiempo" in c][0]
+        col_inf_time  = [c for c in df_inf.columns if "activ" in c][0]
 
-    # materiales
-    df_comp['consumo_real'] = df_comp['cantidad tomada']
-    df_comp['consumo_esp'] = df_comp['cantidad necesaria']
-    df_comp['diff'] = df_comp['consumo_real'] - df_comp['consumo_esp']
-    df_comp['pct'] = df_comp['diff'] / df_comp['consumo_esp'] * 100
-    st.subheader("Resultado Materiales")
-    st.dataframe(df_comp)
+        df_time = pd.merge(
+            df_real[[ord_real, col_real_time]],
+            df_inf[[ord_inf, col_inf_time]],
+            left_on=ord_real,
+            right_on=ord_inf,
+            how="outer",
+            suffixes=("_real","_inf")
+        )
 
-    alerts = df_comp[(df_comp['pct'] > 5) | (df_comp['pct'] < -5)]
-    st.subheader("Alertas Materiales")
-    st.dataframe(alerts)
+        df_time["dif_tiempo"] = df_time[col_real_time] - df_time[col_inf_time]
 
-    st.success("Proceso terminado.")
+        def classify_time(row):
+            if pd.isna(row[col_real_time]): return "Falta tiempo REAL"
+            if pd.isna(row[col_inf_time]): return "Falta notificación SAP"
+            if row["dif_tiempo"] > 0: return "SAP sub-informado (falta sumar)"
+            if row["dif_tiempo"] < 0: return "SAP sobre-informado (reducir)"
+            return "OK"
+
+        df_time["accion"] = df_time.apply(classify_time, axis=1)
+
+        st.subheader("Resultados de tiempos")
+        st.dataframe(df_time)
+
+        # -------------------------
+        # Comparación de materiales
+        # -------------------------
+
+        col_nec = [c for c in df_comp.columns if "necesaria" in c or "necesario" in c][0]
+        col_tom = [c for c in df_comp.columns if "tomada" in c or "consumo" in c][0]
+
+        df_comp["diff"] = df_comp[col_tom] - df_comp[col_nec]
+        df_comp["pct"] = (df_comp["diff"] / df_comp[col_nec].replace(0, pd.NA)) * 100
+
+        st.subheader("Desvíos de materiales")
+        st.dataframe(df_comp)
+
+        # Alerta si supera ±5%
+        df_alert = df_comp[(df_comp["pct"] > 5) | (df_comp["pct"] < -5)]
+        st.subheader("Materiales a corregir (>5% desvío)")
+        st.dataframe(df_alert)
+
+        st.success("Proceso completado.")
+
+    except Exception as e:
+        st.error("⚠️ Ocurrió un error procesando los archivos.")
+        st.write(str(e))
