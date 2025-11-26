@@ -50,13 +50,21 @@ if (
         st.subheader(f"Orden {orden_sel}")
         st.write(f"**Relación producción:** {relacion:.2%}")
 
-        # --- Materiales ---
-        comp = df_comp[df_comp["Orden"] == orden_sel].copy()
-        comp["Esperado"] = comp["Cantidad tomada"] * relacion
-        comp["Desvío"] = comp["Cantidad tomada"] - comp["Esperado"]
+       # --- Materiales ---
+comp = df_comp[df_comp["Orden"] == orden_sel].copy()
+comp["Esperado"] = comp["Cantidad tomada"] * relacion
+comp["Desvío"] = comp["Cantidad tomada"] - comp["Esperado"]
 
-        st.subheader("Materiales")
-        st.dataframe(comp[["Texto Breve Material", "Cantidad tomada", "Esperado", "Desvío"]])
+st.subheader("Materiales")
+st.dataframe(
+    comp[[
+        "Texto breve material",
+        "Cantidad tomada",
+        "Esperado",
+        "Desvío"
+    ]]
+)
+
 
         # --- Tiempos ---
         t_real = df_tr[df_tr["Orden Producción"] == orden_sel]
