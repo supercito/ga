@@ -27,6 +27,8 @@ if (
 
     df_tr = leer_excel(tiempo_real_file)
     df_comp = leer_excel(componentes_file)
+    st.write("Columnas detectadas en COMPONENTES:")
+    st.write(df_comp.columns.tolist())
     df_tinf = leer_excel(tiempos_inf_file)
     df_prod = leer_excel(produccion_file)
 
