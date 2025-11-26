@@ -1,164 +1,180 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 
-st.set_page_config(layout="wide", page_title="Análisis de Producción")
+st.set_page_config(page_title="Analizador de Producción", layout="wide")
 
-st.title("📊 Análisis Automático de Órdenes de Producción")
+st.title("🔎 Analizador Automático de Producción")
 
-# ------------------------------------------------------
-# Función para detectar columnas automáticamente
-# ------------------------------------------------------
-def detectar_columnas(df, posibles):
-    cols = [str(c).strip().lower() for c in df.columns.astype(str)]
-    for i, c in enumerate(cols):
-        for key in posibles:
-            if key in c:
-                return df.columns[i]
-    return None
+# ---------------- 1. SUBIDA DE ARCHIVOS ----------------
+st.header("📥 Cargar archivos")
+tiempo_real_file = st.file_uploader("Tiempo real", type=["xlsx"])
+componentes_file = st.file_uploader("Componentes", type=["xlsx"])
+tiempos_inf_file = st.file_uploader("Tiempos informados", type=["xlsx"])
+produccion_file = st.file_uploader("Producción", type=["xlsx"])
 
-# ------------------------------------------------------
-# SUBIR ARCHIVOS
-# ------------------------------------------------------
+def leer_excel(f):
+    return pd.read_excel(f) if f else None
 
-st.header("1️⃣ Cargar archivos")
+# ---------------- PROCESAR SI ESTÁ TODO ----------------
+if tiempo_real_file and componentes_file and tiempos_inf_file and produccion_file:
 
-uploaded_tr = st.file_uploader("Tiempo Real", type=["csv", "xlsx"])
-uploaded_comp = st.file_uploader("Componentes", type=["csv", "xlsx"])
-uploaded_ti = st.file_uploader("Tiempos Informados", type=["csv", "xlsx"])
-uploaded_prod = st.file_uploader("Producción", type=["csv", "xlsx"])
+    raw_tr = leer_excel(tiempo_real_file)
+    raw_comp = leer_excel(componentes_file)
+    raw_tinf = leer_excel(tiempos_inf_file)
+    raw_prod = leer_excel(produccion_file)
 
-if not (uploaded_tr and uploaded_comp and uploaded_ti and uploaded_prod):
-    st.stop()
+    st.success("Archivos cargados correctamente ✔")
 
-def cargar(f):
-    if f.name.endswith(".csv"):
-        return pd.read_csv(f, dtype=str)
-    return pd.read_excel(f, dtype=str)
+    # ---------------- NORMALIZAR COLUMNAS ----------------
+    def normalizar(df):
+        df.columns = (
+            df.columns.astype(str)
+            .str.strip()
+            .str.lower()
+            .str.replace("á","a")
+            .str.replace("é","e")
+            .str.replace("í","i")
+            .str.replace("ó","o")
+            .str.replace("ú","u")
+        )
+        return df
 
-raw_tr = cargar(uploaded_tr)
-raw_comp = cargar(uploaded_comp)
-raw_ti = cargar(uploaded_ti)
-raw_prod = cargar(uploaded_prod)
+    raw_tr = normalizar(raw_tr)
+    raw_comp = normalizar(raw_comp)
+    raw_tinf = normalizar(raw_tinf)
+    raw_prod = normalizar(raw_prod)
 
-# ------------------------------------------------------
-# 2️⃣ DETECCIÓN AUTOMÁTICA DE COLUMNAS
-# ------------------------------------------------------
+    # ---------------- TIEMPO REAL ----------------
+    # La orden y el tiempo están mezclados en un solo texto
+    col_tr = raw_tr.columns[0]
 
-st.header("2️⃣ Detección automática de columnas")
+    tr = raw_tr.rename(columns={col_tr: "raw_text"})
+    tr["raw_text"] = tr["raw_text"].astype(str)
 
-# -------- TIEMPO REAL --------
-col_tr_orden = detectar_columnas(raw_tr, ["orden"])
-col_tr_tiempo = detectar_columnas(raw_tr, ["tiempo real"])
+    # Extraer orden (primera secuencia numérica de 4+ dígitos)
+    tr["orden"] = tr["raw_text"].str.extract(r"(\d{4,})")
 
-if not col_tr_orden or not col_tr_tiempo:
-    st.error("No se detectaron columnas necesarias en Tiempo Real.")
-    st.stop()
+    # Extraer tiempo (último número decimal)
+    tr["tiempo_real"] = tr["raw_text"].str.extract(r"(\d+[\.,]\d+)$")
 
-tr = raw_tr.rename(columns={
-    col_tr_orden: "orden",
-    col_tr_tiempo: "tiempo_real"
-})
-tr["orden"] = tr["orden"].astype(str).str.strip()
-tr["tiempo_real"] = pd.to_numeric(tr["tiempo_real"], errors="coerce")
+    tr["tiempo_real"] = (
+        tr["tiempo_real"]
+        .str.replace(",", ".", regex=False)
+        .astype(float)
+    )
 
-# -------- COMPONENTES --------
-col_c_orden = detectar_columnas(raw_comp, ["orden"])
-col_c_nec = detectar_columnas(raw_comp, ["cantidad necesaria"])
-col_c_tom = detectar_columnas(raw_comp, ["cantidad tomada"])
+    tr["orden"] = tr["orden"].astype(str)
 
-if None in [col_c_orden, col_c_nec, col_c_tom]:
-    st.error("No se detectaron columnas necesarias en Componentes.")
-    st.stop()
+    # ---------------- COMPONENTES ----------------
+    col_comp_orden = "orden"
+    col_comp_tomada = "cantidad tomada"
+    col_comp_texto = "texto breve material"
 
-comp = raw_comp.rename(columns={
-    col_c_orden: "orden",
-    col_c_nec: "cant_nec",
-    col_c_tom: "cant_tom",
-})
-comp["orden"] = comp["orden"].astype(str).str.strip()
-comp["cant_nec"] = pd.to_numeric(comp["cant_nec"], errors="coerce")
-comp["cant_tom"] = pd.to_numeric(comp["cant_tom"], errors="coerce")
+    comp = raw_comp.rename(columns={
+        col_comp_orden: "orden",
+        col_comp_tomada: "cant_tomada",
+        col_comp_texto: "material"
+    })
 
-# -------- TIEMPOS INFORMADOS --------
-col_ti_orden = detectar_columnas(raw_ti, ["orden"])
-col_ti_dur = detectar_columnas(raw_ti, ["duración", "tratamiento"])
+    comp["orden"] = comp["orden"].astype(str)
 
-if None in [col_ti_orden, col_ti_dur]:
-    st.error("No se detectaron columnas necesarias en Tiempos Informados.")
-    st.stop()
+    # ---------------- TIEMPOS INFORMADOS ----------------
+    tinf = raw_tinf.rename(columns={
+        "orden": "orden",
+        "duración tratamiento": "tiempo_inf"
+    })
 
-ti = raw_ti.rename(columns={
-    col_ti_orden: "orden",
-    col_ti_dur: "tiempo_inf",
-})
-ti["orden"] = ti["orden"].astype(str).str.strip()
-ti["tiempo_inf"] = pd.to_numeric(ti["tiempo_inf"], errors="coerce")
+    tinf["orden"] = tinf["orden"].astype(str)
+    tinf["tiempo_inf"] = (
+        tinf["tiempo_inf"]
+        .astype(str)
+        .str.replace(",", ".", regex=False)
+        .astype(float)
+    )
 
-# -------- PRODUCCIÓN --------
-col_p_orden = detectar_columnas(raw_prod, ["orden"])
-col_p_cant_ord = detectar_columnas(raw_prod, ["cantidad orden"])
-col_p_cant_conf = detectar_columnas(raw_prod, ["cantidad buena"])
+    # ---------------- PRODUCCION ----------------
+    prod = raw_prod.rename(columns={
+        "orden": "orden",
+        "cantidad orden": "cant_orden",
+        "cantidad buena confirmada": "cant_buena"
+    })
 
-if None in [col_p_orden, col_p_cant_ord, col_p_cant_conf]:
-    st.error("No se detectaron columnas necesarias en Producción.")
-    st.stop()
+    prod["orden"] = prod["orden"].astype(str)
 
-prod = raw_prod.rename(columns={
-    col_p_orden: "orden",
-    col_p_cant_ord: "cant_ord",
-    col_p_cant_conf: "cant_conf"
-})
-prod["orden"] = prod["orden"].astype(str).str.strip()
-prod["cant_ord"] = pd.to_numeric(prod["cant_ord"], errors="coerce")
-prod["cant_conf"] = pd.to_numeric(prod["cant_conf"], errors="coerce")
+    # ----------- CONFIGURAR TOLERANCIAS ----------
+    st.header("⚙ Configuración de tolerancias (%)")
 
-# ------------------------------------------------------
-# 3️⃣ AGRUPAR DATOS
-# ------------------------------------------------------
+    margen_inf = st.number_input("Margen inferior (%)", value=-10.0) / 100
+    margen_sup = st.number_input("Margen superior (%)", value=10.0) / 100
 
-tr_group = tr.groupby("orden", as_index=False)["tiempo_real"].sum()
-comp_group = comp.groupby("orden", as_index=False).agg({"cant_nec": "sum", "cant_tom": "sum"})
-ti_group = ti.groupby("orden", as_index=False)["tiempo_inf"].sum()
-prod_group = prod.groupby("orden", as_index=False).agg({"cant_ord": "sum", "cant_conf": "sum"})
+    # ----------- PROCESO AUTOMÁTICO -----------
+    st.header("📊 Resultados del análisis")
 
-# ------------------------------------------------------
-# 4️⃣ UNIFICAR TODO EN UN SOLO DF FINAL
-# ------------------------------------------------------
+    resultados_mat = []
+    resultados_time = []
 
-df = (
-    prod_group
-    .merge(comp_group, on="orden", how="outer")
-    .merge(tr_group, on="orden", how="outer")
-    .merge(ti_group, on="orden", how="outer")
-)
+    ordenes = prod["orden"].unique()
 
-df = df.fillna(0)
+    for o in ordenes:
 
-# ------------------------------------------------------
-# 5️⃣ REGLAS Y DIFERENCIAS
-# ------------------------------------------------------
+        p = prod[prod["orden"] == o].iloc[0]
+        cant_ord = p["cant_orden"]
+        cant_buena = p["cant_buena"]
 
-df["dif_componentes"] = df["cant_nec"] - df["cant_tom"]
-df["dif_tiempos"] = df["tiempo_real"] - df["tiempo_inf"]
+        if cant_ord == 0:
+            continue
 
-df["componentes_faltante"] = df["dif_componentes"].apply(lambda x: x if x > 0 else 0)
-df["tiempo_faltante"] = df["dif_tiempos"].apply(lambda x: x if x > 0 else 0)
+        relacion = cant_buena / cant_ord
 
-df["flag_problema"] = (
-    (df["dif_componentes"] != 0) |
-    (df["dif_tiempos"] != 0) |
-    (df["cant_conf"] != df["cant_ord"])
-)
+        # -------- MATERIALES --------
+        comp_o = comp[comp["orden"] == o].copy()
 
-# ------------------------------------------------------
-# 6️⃣ MOSTRAR RESULTADOS
-# ------------------------------------------------------
+        if len(comp_o):
+            comp_o["esperado"] = comp_o["cant_tomada"] * relacion
+            comp_o["desvio"] = comp_o["cant_tomada"] - comp_o["esperado"]
+            comp_o["ratio"] = comp_o["desvio"] / comp_o["esperado"].replace(0, np.nan)
 
-st.header("3️⃣ Resultado del análisis")
+            comp_o["estado"] = comp_o["ratio"].apply(
+                lambda r: "OK" if margen_inf <= r <= margen_sup else "REVISAR"
+            )
 
-st.subheader("Órdenes con errores detectados")
-st.dataframe(df[df["flag_problema"] == True], use_container_width=True)
+            comp_o["ajuste_necesario"] = -comp_o["desvio"]
 
-st.subheader("Todas las órdenes analizadas")
-st.dataframe(df, use_container_width=True)
+            resultados_mat.append(comp_o[[
+                "orden", "material", "cant_tomada", "esperado",
+                "desvio", "ajuste_necesario", "estado"
+            ]])
 
+        # -------- TIEMPOS --------
+        tr_o = tr[tr["orden"] == o]
+        tinf_o = tinf[tinf["orden"] == o]
+
+        t_real = tr_o["tiempo_real"].sum() if len(tr_o) else 0
+        t_inf = tinf_o["tiempo_inf"].sum() if len(tinf_o) else 0
+
+        desvio_t = t_inf - t_real
+
+        estado_t = "OK" if margen_inf <= (desvio_t / (t_real if t_real else 1)) <= margen_sup else "REVISAR"
+
+        ajuste_tiempo = -desvio_t
+
+        resultados_time.append({
+            "orden": o,
+            "tiempo_real": t_real,
+            "tiempo_informado": t_inf,
+            "desvio": desvio_t,
+            "ajuste_necesario": ajuste_tiempo,
+            "estado": estado_t
+        })
+
+    # Mostrar resultados
+    if resultados_mat:
+        st.subheader("📦 Desvíos en Materiales")
+        st.dataframe(pd.concat(resultados_mat), use_container_width=True)
+
+    st.subheader("⏱ Desvíos en Tiempos")
+    st.dataframe(pd.DataFrame(resultados_time), use_container_width=True)
+
+else:
+    st.info("Sube los 4 archivos para comenzar.")
