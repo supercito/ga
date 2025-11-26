@@ -1,10 +1,26 @@
-# ------- 2. PROCESAR CUANDO ESTÉN TODOS -------
+import streamlit as st
+import pandas as pd
 
+st.title("Analizador de Producción")
+
+# ---------------- 1. SUBIDA DE ARCHIVOS ----------------
+st.header("Cargar archivos")
+tiempo_real_file = st.file_uploader("Tiempo real", type=["xlsx"])
+componentes_file = st.file_uploader("Componentes", type=["xlsx"])
+tiempos_inf_file = st.file_uploader("Tiempos informados", type=["xlsx"])
+produccion_file = st.file_uploader("Producción", type=["xlsx"])
+
+def leer_excel(file):
+    if file is None:
+        return None
+    return pd.read_excel(file)
+
+# ---------------- 2. PROCESAR CUANDO ESTÉN TODOS ----------------
 if (
-    tiempo_real_file
-    and componentes_file
-    and tiempos_inf_file
-    and produccion_file
+    tiempo_real_file is not None
+    and componentes_file is not None
+    and tiempos_inf_file is not None
+    and produccion_file is not None
 ):
 
     df_tr = leer_excel(tiempo_real_file)
@@ -14,8 +30,8 @@ if (
 
     st.success("Archivos cargados correctamente")
 
-    # --- Configurar márgenes ---
-    st.header("Configuración de tolerancias")
+    # --- CONFIGURAR MÁRGENES ---
+    st.header("Configuración de tolerancias (%)")
     margen_inferior = st.number_input("Margen inferior (%)", value=-10.0)
     margen_superior = st.number_input("Margen superior (%)", value=10.0)
 
@@ -26,7 +42,7 @@ if (
     resultados_materiales = []
     resultados_tiempos = []
 
-    # --- Recorrer todas las órdenes ---
+    # ---------------- 3. RECORRER TODAS LAS ÓRDENES ----------------
     for orden in df_prod["Orden"].unique():
 
         prod = df_prod[df_prod["Orden"] == orden].iloc[0]
@@ -45,15 +61,15 @@ if (
             comp_ord["Esperado"] = comp_ord["Cantidad tomada"] * relacion
             comp_ord["Desvío"] = comp_ord["Cantidad tomada"] - comp_ord["Esperado"]
 
-            # Bandera OK / Revisar
-            comp_ord["Estado"] = comp_ord.apply(
-                lambda row: "OK"
-                if margen_inf <= (row["Desvío"] / row["Esperado"] if row["Esperado"] != 0 else 0) <= margen_sup
-                else "REVISAR",
-                axis=1,
-            )
+            def estado_material(row):
+                if row["Esperado"] == 0:
+                    return "OK"
+                ratio = row["Desvío"] / row["Esperado"]
+                return "OK" if margen_inf <= ratio <= margen_sup else "REVISAR"
 
+            comp_ord["Estado"] = comp_ord.apply(estado_material, axis=1)
             comp_ord["Orden"] = orden
+
             resultados_materiales.append(comp_ord)
 
         # ----- TIEMPOS -----
@@ -64,25 +80,31 @@ if (
         tiempo_inf = float(t_inf["Tiempo"].iloc[0]) if len(t_inf) else 0
         desvio = tiempo_inf - tiempo_real
 
-        estado = "OK" if margen_inf <= desvio <= margen_sup else "REVISAR"
+        estado_tiempo = "OK" if margen_inf <= desvio <= margen_sup else "REVISAR"
 
         resultados_tiempos.append({
             "Orden": orden,
             "Tiempo real": tiempo_real,
             "Tiempo informado": tiempo_inf,
             "Desvío": desvio,
-            "Estado": estado
+            "Estado": estado_tiempo
         })
 
-    # Convertir en dataframes finales
+    # ---------------- 4. MOSTRAR RESULTADOS ----------------
     if resultados_materiales:
         df_res_mat = pd.concat(resultados_materiales)
         st.subheader("Desvíos en Materiales")
         st.dataframe(df_res_mat[[
-            "Orden", "Texto breve material", "Cantidad tomada",
-            "Esperado", "Desvío", "Estado"
+            "Orden",
+            "Texto breve material",
+            "Cantidad tomada",
+            "Esperado",
+            "Desvío",
+            "Estado"
         ]])
 
     df_res_tiempos = pd.DataFrame(resultados_tiempos)
     st.subheader("Desvíos en Tiempos")
     st.dataframe(df_res_tiempos)
+else:
+    st.info("Sube todos los archivos para comenzar.")
