@@ -127,6 +127,11 @@ with st.spinner("Leyendo archivos..."):
     raw_tinf = leer_mejor_excel(tiempos_inf_file)
     raw_prod = leer_mejor_excel(produccion_file)
 
+    st.write("Columnas TIEMPO REAL:", df_tr.columns.tolist())
+st.write("Columnas COMPONENTES:", df_comp.columns.tolist())
+st.write("Columnas TIEMPOS INFORMADOS:", df_tinf.columns.tolist())
+st.write("Columnas PRODUCCIÓN:", df_prod.columns.tolist())
+
     # handle special case: if tiempo real has top-title and headers start at row 3 (observado)
     cols_lower = [str(c).strip().lower() for c in raw_tr.columns.astype(str)]
     if all(("unnamed" in c or "tiempo real por" in c) for c in cols_lower[:3]):
