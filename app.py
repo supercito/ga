@@ -3,207 +3,231 @@ import pandas as pd
 import io
 import numpy as np
 
-st.set_page_config(page_title="Dashboard Robustez Total", layout="wide", page_icon="🛡️")
-st.title("🛡️ Dashboard de Control: Modo Diagnóstico")
-st.markdown("Este modo asegura que **siempre** veas datos. Si falta la producción, usa el estándar de SAP.")
+st.set_page_config(page_title="Control Manual y Preciso", layout="wide", page_icon="🎛️")
+st.title("🎛️ Dashboard de Control: Selección de Columnas")
+st.markdown("""
+**Instrucciones:**
+1. Sube los archivos.
+2. En los menús que aparecen abajo, **selecciona la columna correcta** para cada dato.
+3. El sistema calculará los desvíos basándose en tu selección.
+""")
 
-# --- FUNCIONES DE LIMPIEZA ---
+# --- FUNCIONES DE CARGA Y LIMPIEZA ---
+def cargar_excel_simple(file):
+    """Carga el excel tratando de adivinar dónde empieza el encabezado"""
+    if not file: return None
+    try:
+        # Leemos primeras 10 lineas para ver donde hay mas columnas no nulas
+        df_temp = pd.read_excel(file, header=None, nrows=10)
+        max_cols = 0
+        header_row = 0
+        for i in range(len(df_temp)):
+            # Contar columnas con texto
+            non_na = df_temp.iloc[i].count()
+            if non_na > max_cols:
+                max_cols = non_na
+                header_row = i
+        
+        # Cargar con ese header
+        df = pd.read_excel(file, header=header_row)
+        # Limpiar nombres columnas
+        df.columns = df.columns.astype(str).str.strip().str.replace('\n', ' ')
+        return df
+    except Exception as e:
+        st.error(f"Error leyendo archivo: {e}")
+        return None
+
 def clean_key(val):
-    """Limpia la llave para asegurar cruces (quita ceros izq, espacios, puntos)"""
-    val = str(val).split('.')[0].strip()
-    return val
+    """Limpia la Orden para que cruce bien (quita .0 y espacios)"""
+    return str(val).split('.')[0].strip()
 
 def clean_num(val):
+    """Limpia números europeos y textos"""
     if isinstance(val, (int, float)): return val
     if isinstance(val, str):
-        val = val.upper().strip().replace('KG','').replace('CJ','').replace('HRA','').strip()
+        val = val.upper().strip()
+        # Eliminar unidades comunes
+        for unidad in ['KG', 'CJ', 'HRA', 'HR', 'UN', 'M', 'L']:
+            val = val.replace(unidad, '')
+        val = val.strip()
+        # Formato europeo 1.000,00 -> 1000.00
         val = val.replace('.', '').replace(',', '.')
         try: return float(val)
         except: return 0.0
     return 0.0
 
-def load_excel_smart(file, keywords):
-    if not file: return None
-    try:
-        df = pd.read_excel(file, header=None)
-        # Buscar header en primeras 20 filas
-        for i in range(min(20, len(df))):
-            row_str = " ".join(df.iloc[i].astype(str).str.lower())
-            if any(k in row_str for k in keywords):
-                df.columns = df.iloc[i]
-                df = df.iloc[i+1:].reset_index(drop=True)
-                df.columns = df.columns.astype(str).str.strip().str.replace('\n', ' ')
-                return df
-        return df # Si falla, devuelve tal cual
-    except: return None
-
-def find_col(df, options):
-    for col in df.columns:
-        if any(opt in col.lower() for opt in options): return col
-    return None
-
 # --- SIDEBAR ---
-st.sidebar.header("Configuración")
+st.sidebar.header("1. Configuración")
 merma = st.sidebar.number_input("Merma (%)", 0.0, 20.0, 3.0) / 100
-# Pongo el default en 0.0 para que NO oculte nada por defecto
-tolerancia = st.sidebar.slider("Filtro Tolerancia (%)", 0.0, 50.0, 0.0, help="Déjalo en 0 para ver todos los desvíos")
+tolerancia = st.sidebar.slider("Filtro Tolerancia (%)", 0.0, 50.0, 0.0)
 
-f_mat = st.sidebar.file_uploader("1. Materiales", type=["xlsx"])
-f_prod = st.sidebar.file_uploader("2. Producción", type=["xlsx"])
-f_real = st.sidebar.file_uploader("3. Tiempos Real", type=["xlsx"])
-f_sap = st.sidebar.file_uploader("4. Tiempos SAP", type=["xlsx"])
+st.sidebar.divider()
+st.sidebar.header("2. Archivos")
+f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
+f_prod = st.sidebar.file_uploader("Producción (Excel)", type=["xlsx"])
+f_real = st.sidebar.file_uploader("Tiempos Reales", type=["xlsx"])
+f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
 
 # --- LÓGICA PRINCIPAL ---
-if f_mat and f_prod and f_real and f_sap:
+if f_mat and f_prod and f_real and f_sap_t:
     
-    # CARGA
-    df_mat = load_excel_smart(f_mat, ['necesaria', 'material'])
-    df_prod = load_excel_smart(f_prod, ['cantidad buena', 'orden'])
-    df_real = load_excel_smart(f_real, ['tiempo', 'sector'])
-    df_sap = load_excel_smart(f_sap, ['activ.1', 'notificada'])
+    # 1. CARGA INICIAL
+    df_mat = cargar_excel_simple(f_mat)
+    df_prod = cargar_excel_simple(f_prod)
+    df_real = cargar_excel_simple(f_real)
+    df_sap_t = cargar_excel_simple(f_sap_t)
 
-    # LLAVES
-    c_k_mat = find_col(df_mat, ['orden'])
-    c_k_prod = find_col(df_prod, ['orden'])
-    c_k_real = find_col(df_real, ['orden'])
-    c_k_sap = find_col(df_sap, ['orden'])
-
-    if not (c_k_mat and c_k_prod and c_k_real and c_k_sap):
-        st.error("Error: No se encontró columna 'Orden' en alguno de los archivos.")
-        st.stop()
-
-    df_mat['KEY'] = df_mat[c_k_mat].apply(clean_key)
-    df_prod['KEY'] = df_prod[c_k_prod].apply(clean_key)
-    df_real['KEY'] = df_real[c_k_real].apply(clean_key)
-    df_sap['KEY'] = df_sap[c_k_sap].apply(clean_key)
-
-    # ----------------------------------------------------
-    # 📦 ANÁLISIS MATERIALES (CON FALLBACK)
-    # ----------------------------------------------------
-    c_nec = find_col(df_mat, ['necesaria'])
-    c_tom = find_col(df_mat, ['tomada', 'real'])
-    c_plan = find_col(df_prod, ['cantidad orden', 'plan'])
-    c_hecha = find_col(df_prod, ['buena', 'real', 'producida'])
-
-    df_mat['Nec'] = df_mat[c_nec].apply(clean_num)
-    df_mat['Tom'] = df_mat[c_tom].apply(clean_num)
-    df_prod['Plan'] = df_prod[c_plan].apply(clean_num)
-    df_prod['Hecha'] = df_prod[c_hecha].apply(clean_num)
-
-    # Agrupar producción
-    prod_master = df_prod.groupby('KEY')[['Plan', 'Hecha']].sum().reset_index()
-
-    # CRUCE LEFT (Mantener todos los materiales sí o sí)
-    df_m = pd.merge(df_mat, prod_master, on='KEY', how='left')
-
-    # --- LÓGICA DE RECETA DINÁMICA CON SEGURIDAD ---
-    # Paso 1: Determinar si tenemos datos de producción válidos
-    df_m['Tiene_Prod'] = df_m['Plan'].notna() & (df_m['Plan'] > 0)
+    st.divider()
+    st.subheader("🛠️ Paso 2: Selecciona las Columnas Correctas")
     
-    # Rellenar nulos para que no falle la matemática
-    df_m['Plan'].fillna(0, inplace=True)
-    df_m['Hecha'].fillna(0, inplace=True)
-
-    # Paso 2: Calcular
-    # Coeficiente Técnico
-    df_m['Coef'] = np.where(df_m['Plan'] > 0, df_m['Nec'] / df_m['Plan'], 0)
+    # --- SELECTORES DE COLUMNAS (USER MAPPING) ---
+    c1, c2, c3, c4 = st.columns(4)
     
-    # Teorico Ajustado (Si hay prod, usamos Coef * Hecha. Si no, usamos Nec original)
-    df_m['Teorico_Final'] = np.where(
-        df_m['Tiene_Prod'], 
-        df_m['Coef'] * df_m['Hecha'], 
-        df_m['Nec'] # Fallback a SAP estándar
-    )
+    # Helper para pre-seleccionar si encontramos palabras clave
+    def index_col(df, keywords):
+        cols_lower = [str(c).lower() for c in df.columns]
+        for i, col in enumerate(cols_lower):
+            if any(k in col for k in keywords): return i
+        return 0
 
-    # Etiqueta de Origen para que sepas qué pasó
-    df_m['Origen_Datos'] = np.where(
-        df_m['Tiene_Prod'],
-        "Ajustado x Producción",
-        "⚠️ Sin Cruce (SAP Orig)"
-    )
+    with c1:
+        st.info("📦 Materiales")
+        col_mat_orden = st.selectbox("Columna Orden:", df_mat.columns, index=index_col(df_mat, ['orden']), key='mo')
+        col_mat_nec = st.selectbox("Col. Cant. Necesaria:", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
+        col_mat_real = st.selectbox("Col. Cant. Tomada/Real:", df_mat.columns, index=index_col(df_mat, ['tomada', 'real', 'actual']), key='mr')
+        col_mat_desc = st.selectbox("Col. Descripción:", df_mat.columns, index=index_col(df_mat, ['texto', 'desc', 'material']), key='md')
 
-    # Paso 3: Calcular Desvío y Estado
-    df_m['Max_Permitido'] = df_m['Teorico_Final'] * (1 + merma)
-    df_m['Diff'] = df_m['Tom'] - df_m['Max_Permitido']
+    with c2:
+        st.info("🏭 Producción")
+        col_prod_orden = st.selectbox("Columna Orden:", df_prod.columns, index=index_col(df_prod, ['orden']), key='po')
+        # AQUÍ ES DONDE FALLABA ANTES: Asegúrate de elegir la columna que tiene los números reales (ej: 445)
+        col_prod_hecha = st.selectbox("Col. Cajas Real (Hechas):", df_prod.columns, index=index_col(df_prod, ['buena', 'real', 'confirmada']), key='ph')
+        col_prod_plan = st.selectbox("Col. Cajas Plan (Orden):", df_prod.columns, index=index_col(df_prod, ['orden', 'plan', 'cantidad']), key='pp')
 
-    # Filtro %
-    df_m['% Desvio'] = np.where(df_m['Teorico_Final'] > 0, (df_m['Diff'] / df_m['Teorico_Final'])*100, 0)
+    with c3:
+        st.info("⏱️ Tiempos Reales")
+        col_real_orden = st.selectbox("Columna Orden:", df_real.columns, index=index_col(df_real, ['orden']), key='ro')
+        col_real_time = st.selectbox("Col. Tiempo (Máquina):", df_real.columns, index=index_col(df_real, ['tiempo', 'maquina']), key='rt')
 
-    # Estados
-    conds = [
-        (df_m['Tom'] > df_m['Max_Permitido']),
-        (df_m['Tom'] < df_m['Teorico_Final'] * 0.95)
-    ]
-    df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
+    with c4:
+        st.info("⏱️ Tiempos SAP")
+        col_sap_orden = st.selectbox("Columna Orden:", df_sap_t.columns, index=index_col(df_sap_t, ['orden']), key='so')
+        col_sap_time = st.selectbox("Col. Tiempo (Notificado):", df_sap_t.columns, index=index_col(df_sap_t, ['activ', 'notif']), key='st')
 
-    # FILTRO FINAL
-    df_view_mat = df_m[
-        (df_m['Estado'] != 'OK') & 
-        (abs(df_m['% Desvio']) >= tolerancia)
-    ].copy()
-
-    # ----------------------------------------------------
-    # ⏱️ ANÁLISIS TIEMPOS
-    # ----------------------------------------------------
-    c_t_real = find_col(df_real, ['tiempo de máquina', 'machine'])
-    c_t_sap = find_col(df_sap, ['activ.1', 'notificada'])
-    
-    if c_t_real and c_t_sap:
-        df_real['V_Real'] = df_real[c_t_real].apply(clean_num)
-        df_sap['V_Sap'] = df_sap[c_t_sap].apply(clean_num)
+    # --- PROCESAMIENTO CON COLUMNAS SELECCIONADAS ---
+    if st.button("🚀 CALCULAR CON ESTAS COLUMNAS", type="primary"):
         
-        gr = df_real.groupby('KEY')['V_Real'].sum().reset_index()
-        gs = df_sap.groupby('KEY')['V_Sap'].sum().reset_index()
+        # 1. LIMPIEZA DE LLAVES (KEYS)
+        df_mat['KEY'] = df_mat[col_mat_orden].apply(clean_key)
+        df_prod['KEY'] = df_prod[col_prod_orden].apply(clean_key)
+        df_real['KEY'] = df_real[col_real_orden].apply(clean_key)
+        df_sap_t['KEY'] = df_sap_t[col_sap_orden].apply(clean_key)
+
+        # 2. LIMPIEZA DE VALORES
+        df_mat['Nec'] = df_mat[col_mat_nec].apply(clean_num)
+        df_mat['Tom'] = df_mat[col_mat_real].apply(clean_num)
         
-        df_t = pd.merge(gs, gr, on='KEY', how='outer').fillna(0)
+        df_prod['Hecha'] = df_prod[col_prod_hecha].apply(clean_num)
+        df_prod['Plan'] = df_prod[col_prod_plan].apply(clean_num)
+        
+        df_real['V_Real'] = df_real[col_real_time].apply(clean_num)
+        df_sap_t['V_Sap'] = df_sap_t[col_sap_time].apply(clean_num)
+
+        # ------------------------------------
+        # CÁLCULO MATERIALES
+        # ------------------------------------
+        # Agrupar producción (por si hay líneas duplicadas)
+        prod_grouped = df_prod.groupby('KEY')[['Plan', 'Hecha']].sum().reset_index()
+        
+        # Cruzar
+        df_m = pd.merge(df_mat, prod_grouped, on='KEY', how='left')
+        
+        # Lógica de seguridad: Si no cruza, asumimos Plan=0 y Hecha=0
+        df_m['Plan'] = df_m['Plan'].fillna(0)
+        df_m['Hecha'] = df_m['Hecha'].fillna(0)
+        df_m['Origen'] = np.where(df_m['Plan'] > 0, "Cruce OK", "Solo SAP")
+
+        # Fallback: Si no hay cruce, usamos la cantidad necesaria original de SAP como teórico
+        # Si hay cruce, usamos la regla de tres simple (Receta Dinámica)
+        
+        df_m['Coef'] = np.where(df_m['Plan'] > 0, df_m['Nec'] / df_m['Plan'], 0)
+        
+        # EL CALCULO DINAMICO:
+        df_m['Teorico_Calc'] = np.where(
+            df_m['Origen'] == "Cruce OK",
+            df_m['Coef'] * df_m['Hecha'], # Si cruzó, ajustamos a lo real
+            df_m['Nec'] # Si no cruzó, mantenemos el estándar
+        )
+
+        df_m['Max_Permitido'] = df_m['Teorico_Calc'] * (1 + merma)
+        df_m['Diff'] = df_m['Tom'] - df_m['Max_Permitido']
+        
+        # Estados
+        conds = [
+            (df_m['Tom'] > df_m['Max_Permitido']),
+            (df_m['Tom'] < df_m['Teorico_Calc'] * 0.95)
+        ]
+        df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
+        
+        # Filtro
+        df_m['% Desvio'] = np.where(df_m['Teorico_Calc'] > 0, (df_m['Diff'] / df_m['Teorico_Calc'])*100, 0)
+        df_final_m = df_m[(df_m['Estado'] != 'OK') & (abs(df_m['% Desvio']) >= tolerancia)].copy()
+
+        # ------------------------------------
+        # CÁLCULO TIEMPOS
+        # ------------------------------------
+        t_real = df_real.groupby('KEY')['V_Real'].sum().reset_index()
+        t_sap = df_sap_t.groupby('KEY')['V_Sap'].sum().reset_index()
+        
+        df_t = pd.merge(t_sap, t_real, on='KEY', how='outer').fillna(0)
         df_t['Diff'] = df_t['V_Real'] - df_t['V_Sap']
+        
         df_t['Accion'] = np.select(
             [df_t['Diff'] > 0.05, df_t['Diff'] < -0.05],
-            ['SUMAR', 'RESTAR'], default='OK'
+            ['SUMAR (Falta)', 'RESTAR (Sobra)'], default='OK'
         )
-        df_view_t = df_t[df_t['Accion'] != 'OK'].sort_values('Diff', ascending=False)
-    else:
-        df_view_t = pd.DataFrame()
+        df_final_t = df_t[df_t['Accion'] != 'OK'].sort_values('Diff', ascending=False)
 
-    # ----------------------------------------------------
-    # VISUALIZACIÓN
-    # ----------------------------------------------------
-    tab1, tab2 = st.tabs(["📦 MATERIALES", "⏱️ TIEMPOS"])
-
-    with tab1:
-        c1, c2 = st.columns(2)
-        c1.metric("Desvíos Detectados", len(df_view_mat))
+        # ------------------------------------
+        # RESULTADOS
+        # ------------------------------------
+        st.divider()
+        tab1, tab2 = st.tabs(["📦 Materiales", "⏱️ Tiempos"])
         
-        # Muestra rápida de por qué no cruzaba
-        sin_cruce = len(df_m[df_m['Origen_Datos'].str.contains("Sin Cruce")])
-        if sin_cruce > 0:
-            st.warning(f"⚠️ Atención: {sin_cruce} materiales no encontraron su orden en el archivo de Producción (se usó el estándar SAP).")
+        with tab1:
+            st.write(f"**Registros encontrados:** {len(df_final_m)}")
+            
+            # Verificación visual para ti:
+            if st.checkbox("Ver detalle de cálculo (Debug)"):
+                st.write(df_final_m[['KEY', 'Nec', 'Plan', 'Hecha', 'Coef', 'Teorico_Calc']].head())
+            
+            def color_m(val):
+                if val == 'EXCEDENTE': return 'background-color: #ffcdd2; color: black'
+                if val == 'FALTA CARGAR': return 'background-color: #ffeeb0; color: black'
+                return ''
+            
+            # Elegimos columnas finales
+            cols_show = ['KEY', col_mat_desc, 'Origen', 'Hecha', 'Teorico_Calc', 'Tom', 'Estado', 'Diff']
+            st.dataframe(df_final_m[cols_show].style.applymap(color_m, subset=['Estado']), use_container_width=True)
+            
+            # Descarga
+            b = io.BytesIO()
+            with pd.ExcelWriter(b) as w: df_final_m.to_excel(w, index=False)
+            st.download_button("Descargar Excel Materiales", b.getvalue(), "Materiales.xlsx")
 
-        # Columnas a mostrar
-        cols = ['KEY', 'Origen_Datos', 'Hecha', 'Teorico_Final', 'Tom', 'Estado', 'Diff', '% Desvio']
-        # Agregar descripción si existe
-        c_desc = find_col(df_mat, ['texto', 'descrip'])
-        if c_desc: cols.insert(1, c_desc)
-
-        def color_mat(val):
-            if val == 'EXCEDENTE': return 'background-color: #ffcdd2; color: black'
-            if val == 'FALTA CARGAR': return 'background-color: #ffeeb0; color: black'
-            return ''
-
-        st.dataframe(
-            df_view_mat[cols].style.applymap(color_mat, subset=['Estado'])
-            .format({'Hecha':'{:,.0f}', 'Teorico_Final':'{:.2f}', 'Tom':'{:.2f}', 'Diff':'{:.2f}', '% Desvio':'{:.1f}%'}),
-            use_container_width=True
-        )
-
-    with tab2:
-        if not df_view_t.empty:
-            st.dataframe(
-                df_view_t.style.format({'V_Sap':'{:.2f}', 'V_Real':'{:.2f}', 'Diff':'{:.2f}'}),
-                use_container_width=True
-            )
-        else:
-            st.info("No hay desvíos de tiempos.")
+        with tab2:
+            st.write(f"**Diferencias encontradas:** {len(df_final_t)}")
+            
+            def color_t(val):
+                if val > 0: return 'background-color: #ffeeb0; color: black'
+                if val < 0: return 'background-color: #ffcdd2; color: black'
+                return ''
+            
+            st.dataframe(df_final_t.style.applymap(color_t, subset=['Diff']), use_container_width=True)
+            
+            b2 = io.BytesIO()
+            with pd.ExcelWriter(b2) as w: df_final_t.to_excel(w, index=False)
+            st.download_button("Descargar Excel Tiempos", b2.getvalue(), "Tiempos.xlsx")
 
 else:
-    st.info("Sube los 4 archivos.")
+    st.info("Sube los archivos y espera a que aparezcan los selectores de columnas.")
