@@ -90,7 +90,7 @@ if f_mat and f_prod and f_real and f_sap_t:
 
     st.divider()
 
-    # BOTÓN PROCESAR (Solo calcula, no filtra todavía)
+    # BOTÓN PROCESAR
     if st.button("🔄 PROCESAR DATOS", type="primary"):
         # Limpieza Keys
         df_mat['KEY'] = df_mat[col_m_ord].apply(clean_key)
@@ -120,16 +120,16 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_m['Max_Perm'] = df_m['Teorico'] * (1 + merma)
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
         
-        # Porcentaje de Desvío REAL (positivo o negativo)
+        # Porcentaje de Desvío REAL
         df_m['Pct_Desvio'] = np.where(df_m['Teorico'] > 0, (df_m['Diff_Kg'] / df_m['Teorico'])*100, 0)
         
         # Estados
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
 
-        # Guardar RAW en session state
+        # Guardar en session state
         st.session_state['data_mat'] = df_m
-        st.session_state['col_desc_name'] = col_m_desc # Guardamos el nombre de la col descripción
+        st.session_state['col_desc_name'] = col_m_desc
 
         # --- CÁLCULO TIEMPOS ---
         t_r = df_real.groupby('KEY')['_Sys_Real'].sum().reset_index()
@@ -139,7 +139,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         st.session_state['data_time'] = df_t
         st.session_state['processed'] = True
 
-    # --- SECCIÓN DE FILTRADO Y VISUALIZACIÓN ---
+    # --- VISUALIZACIÓN ---
     if st.session_state.get('processed', False):
         
         df_m = st.session_state['data_mat']
@@ -149,44 +149,41 @@ if f_mat and f_prod and f_real and f_sap_t:
         st.divider()
         st.header("🔍 Filtros y Resultados")
         
-        # --- FILTROS DINÁMICOS ---
         col_f1, col_f2 = st.columns(2)
         
         with col_f1:
             st.markdown("##### 1. Filtro de Materiales")
-            # Lista única de materiales
-            lista_materiales = sorted(df_m[col_desc].astype(str).unique())
-            excluir = st.multiselect("Selecciona materiales para NO analizar (Ignorar):", lista_materiales)
+            # Lista de materiales limpia (convertir a str para evitar errores)
+            lista_raw = df_m[col_desc].dropna().unique()
+            lista_materiales = sorted([str(x) for x in lista_raw])
+            excluir = st.multiselect("Ignorar materiales:", lista_materiales)
             
-            # Aplicar filtro exclusión
             if excluir:
-                df_m = df_m[~df_m[col_desc].isin(excluir)]
+                df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
 
         with col_f2:
             st.markdown("##### 2. Rango de Desvío (%)")
-            # Calcular Min y Max real de los datos
             if not df_m.empty:
                 min_val = float(df_m['Pct_Desvio'].min())
                 max_val = float(df_m['Pct_Desvio'].max())
                 
-                # Slider Doble (Range Slider)
+                # Evitar error si min y max son iguales
+                if min_val == max_val:
+                    min_val -= 1.0
+                    max_val += 1.0
+
                 rango = st.slider(
-                    "Filtrar por % de Desvío (Min - Max):",
+                    "Filtrar por %:",
                     min_value=min_val,
                     max_value=max_val,
-                    value=(min_val, max_val), # Por defecto selecciona todo
-                    step=0.1,
-                    format="%.1f%%"
+                    value=(min_val, max_val),
+                    step=0.1
                 )
-                
-                # Aplicar filtro de rango
                 df_m = df_m[(df_m['Pct_Desvio'] >= rango[0]) & (df_m['Pct_Desvio'] <= rango[1])]
 
-        # Filtramos los 'OK' (los que no tienen problemas) a menos que estén dentro del rango seleccionado y sean relevantes
-        # Para limpiar la vista, mostramos solo lo que NO es OK dentro del rango filtrado
         df_final_m = df_m[df_m['Estado'] != 'OK'].copy()
         
-        # --- RENOMBRAMIENTO AMIGABLE ---
+        # Renombrar Materiales
         rename_map = {
             'KEY': 'Orden',
             col_desc: 'Material / Descripción',
@@ -197,12 +194,9 @@ if f_mat and f_prod and f_real and f_sap_t:
             'Pct_Desvio': '% Desvío',
             'Estado': 'Estado'
         }
-        
-        # Preparamos DF para mostrar
         cols_finales = list(rename_map.keys())
         df_show_m = df_final_m[cols_finales].rename(columns=rename_map)
 
-        # --- VISUALIZACIÓN ---
         tab1, tab2 = st.tabs(["📦 Análisis Materiales", "⏱️ Análisis Tiempos"])
         
         with tab1:
@@ -227,20 +221,17 @@ if f_mat and f_prod and f_real and f_sap_t:
                 height=600
             )
             
-            # Descarga
             b = io.BytesIO()
             with pd.ExcelWriter(b) as w: df_show_m.to_excel(w, index=False)
-            st.download_button("📥 Descargar Tabla (Excel)", b.getvalue(), "Reporte_Materiales.xlsx")
+            st.download_button("📥 Excel Materiales", b.getvalue(), "Reporte_Materiales.xlsx")
 
         with tab2:
-            # Filtro simple para tiempos
             ver_todo = st.checkbox("Ver coincidencias exactas (Diferencia 0)", value=False)
             
             df_final_t = df_t.copy()
             if not ver_todo:
                 df_final_t = df_final_t[abs(df_final_t['Diff_Hr']) > 0.01]
             
-            # Renombrar Tiempos
             rename_t = {
                 'KEY': 'Orden',
                 '_Sys_Sap': 'Horas SAP',
@@ -254,16 +245,21 @@ if f_mat and f_prod and f_real and f_sap_t:
                 if val < 0: return 'background-color: #ffcccc; color: black' # Sobra
                 return ''
 
+            # CORRECCIÓN AQUÍ: Usamos un diccionario para aplicar formato SOLO a las columnas numéricas
             st.dataframe(
                 df_show_t.style
                 .applymap(style_t, subset=['Diferencia (Hs)'])
-                .format("{:,.2f}"),
+                .format({
+                    'Horas SAP': '{:,.2f}',
+                    'Horas Reales': '{:,.2f}',
+                    'Diferencia (Hs)': '{:+,.2f}'
+                }),
                 use_container_width=True
             )
             
             b2 = io.BytesIO()
             with pd.ExcelWriter(b2) as w: df_show_t.to_excel(w, index=False)
-            st.download_button("📥 Descargar Tiempos (Excel)", b2.getvalue(), "Reporte_Tiempos.xlsx")
+            st.download_button("📥 Excel Tiempos", b2.getvalue(), "Reporte_Tiempos.xlsx")
 
 else:
     st.info("Carga los archivos para comenzar.")
