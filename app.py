@@ -5,14 +5,7 @@ import numpy as np
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control Producción & SAP", layout="wide", page_icon="🏭")
-st.title("🏭 Dashboard de Control: Producción, Tiempos y Materiales")
-st.markdown("""
-**Instrucciones:**
-1. Carga los 4 archivos.
-2. Mapea las columnas en los selectores.
-3. Presiona **"CALCULAR RESULTADOS"**.
-""")
-
+#st.title("🏭 Dashboard de Control: Producción, Tiempos y Materiales")
 # --- FUNCIONES DE LIMPIEZA ---
 def cargar_excel_simple(file):
     if not file: return None
