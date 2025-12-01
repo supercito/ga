@@ -1,159 +1,231 @@
 import streamlit as st
 import pandas as pd
+import io
+import numpy as np
 
-st.title("Analizador Automático de Producción")
+# --- CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(page_title="Dashboard Control Producción", layout="wide", page_icon="📊")
 
-# ----------------------------------------------------------
-# FUNCIÓN: LECTURA & NORMALIZACIÓN NUMÉRICA
-# ----------------------------------------------------------
-def leer_excel(file):
-    if file is None:
-        return None
-    return pd.read_excel(file)
+st.title("📊 Dashboard de Control: SAP vs Real")
+st.markdown("""
+Analiza los desvíos directamente en pantalla. Utiliza las pestañas de abajo para navegar entre **Horas** y **Materiales**.
+Si detectas errores, puedes descargar el reporte Excel corregido al final.
+""")
 
-def normalizar_num(x):
-    """Convierte números con punto y coma a float seguro"""
-    if pd.isna(x):
-        return 0
-    x = str(x).replace(".", "").replace(",", ".")
+# --- FUNCIONES DE LIMPIEZA ---
+def limpiar_orden(df, col_name):
+    if col_name in df.columns:
+        return df[col_name].astype(str).str.split('.').str[0].str.strip()
+    return df[col_name]
+
+def limpiar_numero(val):
+    if isinstance(val, (int, float)):
+        return val
+    if isinstance(val, str):
+        val = val.strip()
+        val = val.replace('.', '').replace(',', '.') 
+        try:
+            return float(val)
+        except ValueError:
+            return 0.0
+    return 0.0
+
+# --- BARRA LATERAL ---
+st.sidebar.header("⚙️ Configuración")
+
+st.sidebar.subheader("1. Parámetros Materiales")
+merma_input = st.sidebar.number_input(
+    "Merma Permitida (%)", 
+    min_value=0.0, max_value=20.0, value=3.0, step=0.1
+) / 100
+
+tolerancia_filtro = st.sidebar.slider(
+    "Ocultar desvíos menores al (%):", 
+    min_value=0.0, max_value=50.0, value=1.0, step=0.5,
+    help="Filtra errores pequeños que no valen la pena corregir."
+)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("2. Subir Archivos")
+
+file_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx", "xls"])
+file_prod = st.sidebar.file_uploader("Producción (Excel)", type=["xlsx", "xls"]) 
+file_real_time = st.sidebar.file_uploader("Tiempos Reales (Piso)", type=["xlsx", "xls"])
+file_sap_time = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx", "xls"])
+
+# --- LÓGICA PRINCIPAL ---
+if file_mat and file_prod and file_real_time and file_sap_time:
     try:
-        return float(x)
-    except:
-        return 0
+        with st.spinner('Procesando datos...'):
+            # Cargar DataFrames
+            df_mat = pd.read_excel(file_mat)
+            df_real = pd.read_excel(file_real_time)
+            df_sap_time = pd.read_excel(file_sap_time)
+            
+            # --- LIMPIEZA ---
+            # Ordenes
+            df_mat['Orden'] = limpiar_orden(df_mat, 'Orden')
+            df_real['Orden'] = limpiar_orden(df_real, 'Orden Producción')
+            df_sap_time['Orden'] = limpiar_orden(df_sap_time, 'Orden')
 
-# ----------------------------------------------------------
-# SUBIDA DE ARCHIVOS
-# ----------------------------------------------------------
-st.header("Cargar archivos")
+            # Números
+            df_mat['Cantidad necesaria'] = df_mat['Cantidad necesaria'].apply(limpiar_numero)
+            df_mat['Cantidad tomada'] = df_mat['Cantidad tomada'].apply(limpiar_numero)
+            df_real['Tiempo de Máquina'] = df_real['Tiempo de Máquina'].apply(limpiar_numero)
+            df_sap_time['Activ.1 notificada'] = df_sap_time['Activ.1 notificada'].apply(limpiar_numero)
 
-tr_file = st.file_uploader("Tiempo Real", type=["xlsx"])
-cp_file = st.file_uploader("Componentes", type=["xlsx"])
-ti_file = st.file_uploader("Tiempos Informados", type=["xlsx"])
-pr_file = st.file_uploader("Producción", type=["xlsx"])
+            # ==========================================
+            # 🕒 PROCESAMIENTO HORAS
+            # ==========================================
+            sap_horas = df_sap_time.groupby('Orden')['Activ.1 notificada'].sum().reset_index()
+            real_horas = df_real.groupby('Orden')['Tiempo de Máquina'].sum().reset_index()
 
-if tr_file and cp_file and ti_file and pr_file:
+            df_h = pd.merge(sap_horas, real_horas, on='Orden', how='outer').fillna(0)
+            df_h.rename(columns={'Activ.1 notificada': 'Horas_SAP', 'Tiempo de Máquina': 'Horas_Real'}, inplace=True)
+            
+            df_h['Diferencia'] = df_h['Horas_Real'] - df_h['Horas_SAP']
+            
+            # Lógica de acción
+            def get_action_h(val):
+                if abs(val) < 0.05: return "OK"
+                return "SUMAR A SAP" if val > 0 else "RESTAR A SAP"
 
-    tr_raw = leer_excel(tr_file)
-    cp = leer_excel(cp_file)
-    ti = leer_excel(ti_file)
-    pr = leer_excel(pr_file)
+            df_h['Acción'] = df_h['Diferencia'].apply(get_action_h)
+            
+            # Filtrar solo errores para mostrar
+            df_h_show = df_h[df_h['Acción'] != "OK"].copy()
+            df_h_show = df_h_show.sort_values(by='Diferencia', ascending=False)
 
-    st.success("Archivos cargados correctamente")
+            # ==========================================
+            # 🧪 PROCESAMIENTO MATERIALES
+            # ==========================================
+            df_mat['Consumo_Maximo_OK'] = df_mat['Cantidad necesaria'] * (1 + merma_input)
+            df_mat['Desvio_Abs'] = df_mat['Cantidad tomada'] - df_mat['Consumo_Maximo_OK']
+            
+            # Porcentaje real de desvío sobre la base
+            df_mat['% Desvio'] = df_mat.apply(
+                lambda x: ((x['Cantidad tomada'] - x['Cantidad necesaria']) / x['Cantidad necesaria'] * 100) 
+                if x['Cantidad necesaria'] > 0 else 0, axis=1
+            )
 
-    # ----------------------------------------------------------
-    # LIMPIEZA TIEMPO REAL (solo 2 columnas reales)
-    # ----------------------------------------------------------
-    tr = pd.DataFrame()
-    tr["orden"] = tr_raw.iloc[:, 0].astype(str).str.replace(".0", "", regex=False)
-    tr["tiempo_real"] = tr_raw.iloc[:, 9].apply(normalizar_num)
+            # Filtro de tolerancia visual
+            mask_tolerancia = abs(df_mat['% Desvio']) >= tolerancia_filtro
+            df_mat_view = df_mat[mask_tolerancia].copy()
 
-    # ----------------------------------------------------------
-    # NORMALIZACIÓN GENERAL
-    # ----------------------------------------------------------
-    for df in [cp, ti, pr]:
-        df.columns = df.columns.str.lower().str.strip()
+            # Estado
+            conditions = [
+                (df_mat_view['Cantidad tomada'] < df_mat_view['Cantidad necesaria']),
+                (df_mat_view['Cantidad tomada'] > df_mat_view['Consumo_Maximo_OK'])
+            ]
+            choices = ['FALTA CARGAR', 'EXCEDENTE']
+            df_mat_view['Estado'] = np.select(conditions, choices, default='EN RANGO')
+            
+            # Filtramos los que están "En Rango" (aunque pasen la tolerancia numérica, si están dentro de la merma, es OK)
+            df_mat_final = df_mat_view[df_mat_view['Estado'] != 'EN RANGO'].copy()
+            
+            # Cantidad a corregir
+            df_mat_final['Ajuste_Sugerido'] = np.where(
+                df_mat_final['Estado'] == 'FALTA CARGAR',
+                df_mat_final['Cantidad necesaria'] - df_mat_final['Cantidad tomada'],
+                df_mat_final['Cantidad tomada'] - df_mat_final['Consumo_Maximo_OK']
+            )
 
-    # CORREGIR FORMATO ORDEN
-    cp["orden"] = cp["orden"].astype(str).str.replace(".0", "", regex=False)
-    ti["orden"] = ti["orden"].astype(str).str.replace(".0", "", regex=False)
-    pr["orden"] = pr["orden"].astype(str).str.replace(".0", "", regex=False)
+        # ==========================================
+        # 🖥️ VISUALIZACIÓN ONLINE (DASHBOARD)
+        # ==========================================
+        
+        # PESTAÑAS PRINCIPALES
+        tab1, tab2 = st.tabs(["🕒 Análisis de Horas", "🧪 Análisis de Materiales"])
 
-    # ----------------------------------------------------------
-    # TIEMPOS INFORMADOS – convertir a horas reales
-    # ----------------------------------------------------------
-    ti["duración tratamiento"] = ti["duración tratamiento"].apply(normalizar_num)
+        # --- TAB 1: HORAS ---
+        with tab1:
+            st.subheader("Control de Tiempos")
+            
+            # KPIs
+            col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
+            errores_horas = len(df_h_show)
+            horas_faltantes = df_h_show[df_h_show['Diferencia'] > 0]['Diferencia'].sum()
+            horas_sobrantes = abs(df_h_show[df_h_show['Diferencia'] < 0]['Diferencia'].sum())
 
-    tiempos_inf = (
-        ti.groupby("orden")["duración tratamiento"]
-        .sum()
-        .reset_index()
-        .rename(columns={"duración tratamiento": "tiempo_informado"})
-    )
+            col_kpi1.metric("Órdenes con Error", errores_horas, border=True)
+            col_kpi2.metric("Horas que faltan cargar", f"{horas_faltantes:.2f} h", delta="Déficit SAP", delta_color="inverse", border=True)
+            col_kpi3.metric("Horas excedidas en SAP", f"{horas_sobrantes:.2f} h", delta="Exceso SAP", delta_color="normal", border=True)
 
-    # ----------------------------------------------------------
-    # PRODUCCIÓN: cantidades correctas
-    # ----------------------------------------------------------
-    pr["cantidad orden"] = pr["cantidad orden"].apply(normalizar_num)
-    pr["cantidad buena confirmada"] = pr["cantidad buena confirmada"].apply(normalizar_num)
+            st.write("### 📋 Detalle de Órdenes a Corregir")
+            st.markdown("_Puedes ordenar la tabla haciendo clic en los encabezados_")
+            
+            # Tabla Estilizada
+            st.dataframe(
+                df_h_show.style.format({
+                    'Horas_SAP': '{:.2f}', 
+                    'Horas_Real': '{:.2f}', 
+                    'Diferencia': '{:+.2f}'
+                }).background_gradient(subset=['Diferencia'], cmap='RdYlGn', vmin=-5, vmax=5),
+                use_container_width=True,
+                height=400
+            )
 
-    df = pr[["orden", "cantidad orden", "cantidad buena confirmada"]].copy()
+            # Botón Descarga Tab 1
+            buffer_h = io.BytesIO()
+            with pd.ExcelWriter(buffer_h, engine='xlsxwriter') as writer:
+                df_h_show.to_excel(writer, index=False, sheet_name='Ajuste Horas')
+            
+            st.download_button(
+                label="📥 Descargar Reporte de Horas (.xlsx)",
+                data=buffer_h.getvalue(),
+                file_name="Ajuste_Horas_SAP.xlsx",
+                mime="application/vnd.ms-excel"
+            )
 
-    # ----------------------------------------------------------
-    # UNIÓN
-    # ----------------------------------------------------------
-    df = df.merge(tr, on="orden", how="left")
-    df = df.merge(tiempos_inf, on="orden", how="left")
+        # --- TAB 2: MATERIALES ---
+        with tab2:
+            st.subheader(f"Control de Materiales (Merma: {merma_input*100}%)")
+            
+            # KPIs
+            col_m1, col_m2 = st.columns(2)
+            mat_criticos = len(df_mat_final[df_mat_final['Estado'] == 'EXCEDENTE'])
+            mat_falta = len(df_mat_final[df_mat_final['Estado'] == 'FALTA CARGAR'])
+            
+            col_m1.metric("Materiales con Excedente Crítico", mat_criticos, border=True)
+            col_m2.metric("Materiales Pendientes de Carga", mat_falta, border=True)
 
-    df["tiempo_real"] = df["tiempo_real"].fillna(0)
-    df["tiempo_informado"] = df["tiempo_informado"].fillna(0)
+            st.write("### 📋 Detalle de Desvíos")
+            
+            # Selección de columnas para ver online
+            cols_ver = ['Orden', 'Material', 'Texto breve material', 'Cantidad necesaria', 
+                        'Cantidad tomada', 'Estado', 'Ajuste_Sugerido', '% Desvio']
+            
+            # Colores dinámicos
+            def color_estado(val):
+                color = '#ffcccb' if val == 'EXCEDENTE' else '#fff4cc' # Rojo suave o Naranja suave
+                return f'background-color: {color}; color: black'
 
-    # ----------------------------------------------------------
-    # COMPONENTES: normalizar cantidades
-    # ----------------------------------------------------------
-    cp["cantidad necesaria"] = cp["cantidad necesaria"].apply(normalizar_num)
-    cp["cantidad tomada"] = cp["cantidad tomada"].apply(normalizar_num)
+            st.dataframe(
+                df_mat_final[cols_ver].style.format({
+                    'Cantidad necesaria': '{:.2f}',
+                    'Cantidad tomada': '{:.2f}',
+                    'Ajuste_Sugerido': '{:.2f}',
+                    '% Desvio': '{:.1f}%'
+                }).applymap(color_estado, subset=['Estado']),
+                use_container_width=True,
+                height=500
+            )
 
-    # ----------------------------------------------------------
-    # ANÁLISIS FINAL
-    # ----------------------------------------------------------
-    resultados_materiales = []
-    resultados_tiempos = []
+            # Botón Descarga Tab 2
+            buffer_m = io.BytesIO()
+            with pd.ExcelWriter(buffer_m, engine='xlsxwriter') as writer:
+                df_mat_final.to_excel(writer, index=False, sheet_name='Ajuste Materiales')
+            
+            st.download_button(
+                label="📥 Descargar Reporte de Materiales (.xlsx)",
+                data=buffer_m.getvalue(),
+                file_name="Ajuste_Materiales_SAP.xlsx",
+                mime="application/vnd.ms-excel"
+            )
 
-    for orden in df["orden"].unique():
-
-        fila = df[df["orden"] == orden].iloc[0]
-
-        cant_ord = fila["cantidad orden"]
-        cant_buena = fila["cantidad buena confirmada"]
-
-        relacion = (cant_buena / cant_ord) if cant_ord != 0 else 1
-
-        # ---- TIEMPOS ----
-        real = fila["tiempo_real"]
-        inf = fila["tiempo_informado"]
-        desvio_t = inf - real
-        ajuste_t = -desvio_t
-        estado_t = "OK" if abs(desvio_t) < 0.01 else "REVISAR"
-
-        resultados_tiempos.append({
-            "orden": orden,
-            "tiempo real (hrs)": real,
-            "tiempo informado (hrs)": inf,
-            "desvío (hrs)": desvio_t,
-            "ajuste necesario": ajuste_t,
-            "estado": estado_t
-        })
-
-        # ---- MATERIALES ----
-        mat = cp[cp["orden"] == orden]
-
-        for _, m in mat.iterrows():
-            esperado = m["cantidad necesaria"] * relacion
-            desvio_m = m["cantidad tomada"] - esperado
-            ajuste_m = -desvio_m
-            estado_m = "OK" if abs(desvio_m) < 0.01 else "REVISAR"
-
-            resultados_materiales.append({
-                "orden": orden,
-                "material": m["material"],
-                "texto": m["texto breve material"],
-                "cantidad necesaria": m["cantidad necesaria"],
-                "cantidad tomada": m["cantidad tomada"],
-                "esperado según producción": esperado,
-                "desvío": desvio_m,
-                "ajuste necesario": ajuste_m,
-                "estado": estado_m
-            })
-
-    # ----------------------------------------------------------
-    # MOSTRAR RESULTADOS
-    # ----------------------------------------------------------
-
-    st.header("Resultados de Tiempos")
-    st.dataframe(pd.DataFrame(resultados_tiempos))
-
-    st.header("Resultados de Materiales")
-    st.dataframe(pd.DataFrame(resultados_materiales))
-
+    except Exception as e:
+        st.error(f"⚠️ Error al procesar: {e}")
+        st.write("Por favor revisa que los encabezados de los archivos Excel sean los correctos.")
 else:
-    st.info("Cargá los 4 archivos para comenzar.")
+    # Mensaje de bienvenida cuando no hay archivos
+    st.info("👈 Por favor, carga los 4 archivos en el menú lateral para comenzar el análisis.")
