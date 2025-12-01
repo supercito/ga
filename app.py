@@ -4,25 +4,64 @@ import io
 import numpy as np
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Dashboard Control Producción", layout="wide", page_icon="📊")
+st.set_page_config(page_title="Dashboard Corrector SAP", layout="wide", page_icon="🏭")
 
-st.title("📊 Dashboard de Control: SAP vs Real")
+st.title("🏭 Dashboard de Control Industrial")
 st.markdown("""
-Analiza los desvíos directamente en pantalla. Utiliza las pestañas de abajo para navegar entre **Horas** y **Materiales**.
-Si detectas errores, puedes descargar el reporte Excel corregido al final.
+**Detector Automático:** Este sistema busca automáticamente dónde empieza la tabla en tus archivos Excel, 
+incluso si tienen títulos o filas vacías al principio.
 """)
 
-# --- FUNCIONES DE LIMPIEZA ---
-def limpiar_orden(df, col_name):
-    if col_name in df.columns:
-        return df[col_name].astype(str).str.split('.').str[0].str.strip()
-    return df[col_name]
+# --- FUNCIONES ROBUSTAS DE CARGA ---
+
+def encontrar_fila_encabezado(df, palabras_clave):
+    """
+    Busca en las primeras 15 filas si existe alguna que contenga 
+    las palabras clave esperadas. Retorna el índice de la fila y el DF ajustado.
+    """
+    # Escaneamos las primeras filas
+    for i in range(min(15, len(df))):
+        fila_texto = df.iloc[i].astype(str).str.lower().tolist()
+        # Unimos todo el texto de la fila para buscar
+        texto_unido = " ".join(fila_texto)
+        
+        # Si encontramos alguna de las palabras clave (ej: 'orden', 'material')
+        if any(clave in texto_unido for clave in palabras_clave):
+            # Esta fila 'i' es el encabezado
+            df.columns = df.iloc[i] # Asignar esta fila como columnas
+            df = df.iloc[i+1:].reset_index(drop=True) # Tomar los datos de ahí para abajo
+            
+            # Limpiar nombres de columnas (quitar espacios y saltos de linea)
+            df.columns = df.columns.astype(str).str.strip().str.replace('\n', ' ')
+            return df, i
+            
+    return df, 0 # Si no encuentra nada, asume que la fila 0 era la correcta
+
+def cargar_excel_inteligente(uploaded_file, keywords, nombre_archivo):
+    if uploaded_file is None: return None
+    
+    try:
+        # Leemos sin header para ver el contenido crudo
+        df_crudo = pd.read_excel(uploaded_file, header=None)
+        
+        # Buscamos el encabezado real
+        df_limpio, fila_encontrada = encontrar_fila_encabezado(df_crudo, keywords)
+        
+        if fila_encontrada > 0:
+            st.toast(f"✅ Tabla detectada en fila {fila_encontrada + 1} para {nombre_archivo}")
+        
+        return df_limpio
+    except Exception as e:
+        st.error(f"Error leyendo {nombre_archivo}: {e}")
+        return None
 
 def limpiar_numero(val):
     if isinstance(val, (int, float)):
         return val
     if isinstance(val, str):
         val = val.strip()
+        # Elimina letras si se colaron (ej: "100 KG")
+        val = val.replace('KG', '').replace('CJ', '').replace('HRA', '').strip()
         val = val.replace('.', '').replace(',', '.') 
         try:
             return float(val)
@@ -30,202 +69,200 @@ def limpiar_numero(val):
             return 0.0
     return 0.0
 
+def limpiar_orden(df, col_name_patterns):
+    """Busca la columna orden por patrones y la limpia"""
+    col_found = None
+    for col in df.columns:
+        # Busca si el nombre de la columna contiene 'orden' (ignora mayus/minus)
+        if any(patron in col.lower() for patron in col_name_patterns):
+            col_found = col
+            break
+            
+    if col_found:
+        # Estandarizar nombre interno
+        df['Orden_Key'] = df[col_found].astype(str).str.split('.').str[0].str.strip()
+        return df, True
+    else:
+        return df, False
+
 # --- BARRA LATERAL ---
 st.sidebar.header("⚙️ Configuración")
 
-st.sidebar.subheader("1. Parámetros Materiales")
-merma_input = st.sidebar.number_input(
-    "Merma Permitida (%)", 
-    min_value=0.0, max_value=20.0, value=3.0, step=0.1
-) / 100
+st.sidebar.subheader("Tolerancias")
+merma_input = st.sidebar.number_input("Merma Permitida (%)", 0.0, 20.0, 3.0, 0.1) / 100
+tolerancia_filtro = st.sidebar.slider("Filtro visual (%)", 0.0, 50.0, 1.0, 0.5)
 
-tolerancia_filtro = st.sidebar.slider(
-    "Ocultar desvíos menores al (%):", 
-    min_value=0.0, max_value=50.0, value=1.0, step=0.5,
-    help="Filtra errores pequeños que no valen la pena corregir."
-)
+st.sidebar.divider()
+st.sidebar.subheader("Carga de Archivos")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("2. Subir Archivos")
+f_mat = st.sidebar.file_uploader("1. Materiales (SAP)", type=["xlsx"])
+f_prod = st.sidebar.file_uploader("2. Producción (Excel)", type=["xlsx"]) 
+f_real = st.sidebar.file_uploader("3. Tiempos Reales (Piso)", type=["xlsx"])
+f_sap_t = st.sidebar.file_uploader("4. Tiempos SAP", type=["xlsx"])
 
-file_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx", "xls"])
-file_prod = st.sidebar.file_uploader("Producción (Excel)", type=["xlsx", "xls"]) 
-file_real_time = st.sidebar.file_uploader("Tiempos Reales (Piso)", type=["xlsx", "xls"])
-file_sap_time = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx", "xls"])
+# --- LÓGICA DE NEGOCIO ---
+if f_mat and f_prod and f_real and f_sap_t:
+    
+    # 1. CARGA INTELIGENTE
+    # Definimos palabras clave únicas que seguro están en el encabezado de cada archivo
+    df_mat = cargar_excel_inteligente(f_mat, ['cantidad necesaria', 'texto breve'], "Materiales")
+    df_prod = cargar_excel_inteligente(f_prod, ['cantidad buena', 'cantidad orden'], "Producción")
+    df_real = cargar_excel_inteligente(f_real, ['tiempo de máquina', 'sector', 'planta'], "Tiempos Reales")
+    df_sap_t = cargar_excel_inteligente(f_sap_t, ['activ.1', 'recursos'], "Tiempos SAP")
 
-# --- LÓGICA PRINCIPAL ---
-if file_mat and file_prod and file_real_time and file_sap_time:
-    try:
-        with st.spinner('Procesando datos...'):
-            # Cargar DataFrames
-            df_mat = pd.read_excel(file_mat)
-            df_real = pd.read_excel(file_real_time)
-            df_sap_time = pd.read_excel(file_sap_time)
+    if all(v is not None for v in [df_mat, df_prod, df_real, df_sap_t]):
+        try:
+            # 2. NORMALIZACIÓN DE LLAVES (Orden)
+            df_mat, ok1 = limpiar_orden(df_mat, ['orden'])
+            df_real, ok2 = limpiar_orden(df_real, ['orden']) # Busca "orden producción" o "orden"
+            df_sap_t, ok3 = limpiar_orden(df_sap_t, ['orden'])
             
-            # --- LIMPIEZA ---
-            # Ordenes
-            df_mat['Orden'] = limpiar_orden(df_mat, 'Orden')
-            df_real['Orden'] = limpiar_orden(df_real, 'Orden Producción')
-            df_sap_time['Orden'] = limpiar_orden(df_sap_time, 'Orden')
+            if not (ok1 and ok2 and ok3):
+                st.error("❌ No se pudo identificar la columna 'Orden' en alguno de los archivos. Revisa los nombres de encabezados.")
+                st.stop()
 
-            # Números
-            df_mat['Cantidad necesaria'] = df_mat['Cantidad necesaria'].apply(limpiar_numero)
-            df_mat['Cantidad tomada'] = df_mat['Cantidad tomada'].apply(limpiar_numero)
-            df_real['Tiempo de Máquina'] = df_real['Tiempo de Máquina'].apply(limpiar_numero)
-            df_sap_time['Activ.1 notificada'] = df_sap_time['Activ.1 notificada'].apply(limpiar_numero)
+            # 3. LIMPIEZA DE VALORES NUMÉRICOS
+            # Buscamos columnas críticas dinámicamente (por si cambian un poco el nombre)
+            def buscar_col(df, keywords):
+                for col in df.columns:
+                    if any(k in col.lower() for k in keywords):
+                        return col
+                return None
 
-            # ==========================================
-            # 🕒 PROCESAMIENTO HORAS
-            # ==========================================
-            sap_horas = df_sap_time.groupby('Orden')['Activ.1 notificada'].sum().reset_index()
-            real_horas = df_real.groupby('Orden')['Tiempo de Máquina'].sum().reset_index()
-
-            df_h = pd.merge(sap_horas, real_horas, on='Orden', how='outer').fillna(0)
-            df_h.rename(columns={'Activ.1 notificada': 'Horas_SAP', 'Tiempo de Máquina': 'Horas_Real'}, inplace=True)
+            # Materiales
+            c_necesaria = buscar_col(df_mat, ['necesaria'])
+            c_tomada = buscar_col(df_mat, ['tomada', 'real'])
+            if c_necesaria and c_tomada:
+                df_mat['Nec_Num'] = df_mat[c_necesaria].apply(limpiar_numero)
+                df_mat['Tom_Num'] = df_mat[c_tomada].apply(limpiar_numero)
             
-            df_h['Diferencia'] = df_h['Horas_Real'] - df_h['Horas_SAP']
-            
-            # Lógica de acción
-            def get_action_h(val):
-                if abs(val) < 0.05: return "OK"
-                return "SUMAR A SAP" if val > 0 else "RESTAR A SAP"
+            # Tiempos Reales
+            c_tiempo_real = buscar_col(df_real, ['tiempo de máquina', 'tiempo maquina', 'machine'])
+            if c_tiempo_real:
+                df_real['Real_Time_Num'] = df_real[c_tiempo_real].apply(limpiar_numero)
+            else:
+                st.error("No encontré columna de 'Tiempo de Máquina'")
+                st.stop()
 
-            df_h['Acción'] = df_h['Diferencia'].apply(get_action_h)
-            
-            # Filtrar solo errores para mostrar
-            df_h_show = df_h[df_h['Acción'] != "OK"].copy()
-            df_h_show = df_h_show.sort_values(by='Diferencia', ascending=False)
+            # Tiempos SAP
+            c_tiempo_sap = buscar_col(df_sap_t, ['activ.1', 'notificada'])
+            if c_tiempo_sap:
+                df_sap_t['Sap_Time_Num'] = df_sap_t[c_tiempo_sap].apply(limpiar_numero)
 
-            # ==========================================
-            # 🧪 PROCESAMIENTO MATERIALES
-            # ==========================================
-            df_mat['Consumo_Maximo_OK'] = df_mat['Cantidad necesaria'] * (1 + merma_input)
-            df_mat['Desvio_Abs'] = df_mat['Cantidad tomada'] - df_mat['Consumo_Maximo_OK']
+            # ----------------------------------------------------
+            # CÁLCULOS
+            # ----------------------------------------------------
+
+            # --- A. HORAS ---
+            g_sap = df_sap_t.groupby('Orden_Key')['Sap_Time_Num'].sum().reset_index()
+            g_real = df_real.groupby('Orden_Key')['Real_Time_Num'].sum().reset_index()
             
-            # Porcentaje real de desvío sobre la base
-            df_mat['% Desvio'] = df_mat.apply(
-                lambda x: ((x['Cantidad tomada'] - x['Cantidad necesaria']) / x['Cantidad necesaria'] * 100) 
-                if x['Cantidad necesaria'] > 0 else 0, axis=1
+            df_horas = pd.merge(g_sap, g_real, on='Orden_Key', how='outer').fillna(0)
+            df_horas['Diferencia'] = df_horas['Real_Time_Num'] - df_horas['Sap_Time_Num']
+            
+            # Etiqueta de acción
+            df_horas['Acción'] = np.select(
+                [df_horas['Diferencia'] > 0.05, df_horas['Diferencia'] < -0.05],
+                ['SUMAR A SAP (Falta)', 'RESTAR A SAP (Sobra)'],
+                default='OK'
             )
+            
+            # Tabla final Horas
+            df_horas_final = df_horas[df_horas['Acción'] != 'OK'].copy()
+            df_horas_final = df_horas_final.sort_values('Diferencia', ascending=False)
+            df_horas_final.columns = ['Orden', 'Horas SAP', 'Horas Reales', 'Ajuste Necesario', 'Acción']
 
-            # Filtro de tolerancia visual
-            mask_tolerancia = abs(df_mat['% Desvio']) >= tolerancia_filtro
-            df_mat_view = df_mat[mask_tolerancia].copy()
-
-            # Estado
-            conditions = [
-                (df_mat_view['Cantidad tomada'] < df_mat_view['Cantidad necesaria']),
-                (df_mat_view['Cantidad tomada'] > df_mat_view['Consumo_Maximo_OK'])
+            # --- B. MATERIALES ---
+            # Unimos con los datos limpios
+            df_mat['Max_Teorico'] = df_mat['Nec_Num'] * (1 + merma_input)
+            
+            # Estados
+            condiciones = [
+                (df_mat['Tom_Num'] < df_mat['Nec_Num']), # Menos que la base técnica
+                (df_mat['Tom_Num'] > df_mat['Max_Teorico']) # Más que base + merma
             ]
-            choices = ['FALTA CARGAR', 'EXCEDENTE']
-            df_mat_view['Estado'] = np.select(conditions, choices, default='EN RANGO')
+            opciones = ['FALTA CARGAR', 'EXCEDENTE']
+            df_mat['Estado'] = np.select(condiciones, opciones, default='OK')
             
-            # Filtramos los que están "En Rango" (aunque pasen la tolerancia numérica, si están dentro de la merma, es OK)
-            df_mat_final = df_mat_view[df_mat_view['Estado'] != 'EN RANGO'].copy()
-            
-            # Cantidad a corregir
-            df_mat_final['Ajuste_Sugerido'] = np.where(
-                df_mat_final['Estado'] == 'FALTA CARGAR',
-                df_mat_final['Cantidad necesaria'] - df_mat_final['Cantidad tomada'],
-                df_mat_final['Cantidad tomada'] - df_mat_final['Consumo_Maximo_OK']
+            # Cálculo de ajuste exacto
+            df_mat['Ajuste'] = np.select(
+                [df_mat['Estado'] == 'FALTA CARGAR', df_mat['Estado'] == 'EXCEDENTE'],
+                [df_mat['Nec_Num'] - df_mat['Tom_Num'], df_mat['Tom_Num'] - df_mat['Max_Teorico']],
+                default=0
             )
-
-        # ==========================================
-        # 🖥️ VISUALIZACIÓN ONLINE (DASHBOARD)
-        # ==========================================
-        
-        # PESTAÑAS PRINCIPALES
-        tab1, tab2 = st.tabs(["🕒 Análisis de Horas", "🧪 Análisis de Materiales"])
-
-        # --- TAB 1: HORAS ---
-        with tab1:
-            st.subheader("Control de Tiempos")
             
-            # KPIs
-            col_kpi1, col_kpi2, col_kpi3 = st.columns(3)
-            errores_horas = len(df_h_show)
-            horas_faltantes = df_h_show[df_h_show['Diferencia'] > 0]['Diferencia'].sum()
-            horas_sobrantes = abs(df_h_show[df_h_show['Diferencia'] < 0]['Diferencia'].sum())
-
-            col_kpi1.metric("Órdenes con Error", errores_horas, border=True)
-            col_kpi2.metric("Horas que faltan cargar", f"{horas_faltantes:.2f} h", delta="Déficit SAP", delta_color="inverse", border=True)
-            col_kpi3.metric("Horas excedidas en SAP", f"{horas_sobrantes:.2f} h", delta="Exceso SAP", delta_color="normal", border=True)
-
-            st.write("### 📋 Detalle de Órdenes a Corregir")
-            st.markdown("_Puedes ordenar la tabla haciendo clic en los encabezados_")
+            # Filtro porcentaje
+            df_mat['% Desvio'] = np.where(df_mat['Nec_Num'] > 0, 
+                                          (df_mat['Tom_Num'] - df_mat['Nec_Num']) / df_mat['Nec_Num'] * 100, 0)
             
-            # Tabla Estilizada
-            st.dataframe(
-                df_h_show.style.format({
-                    'Horas_SAP': '{:.2f}', 
-                    'Horas_Real': '{:.2f}', 
-                    'Diferencia': '{:+.2f}'
-                }).background_gradient(subset=['Diferencia'], cmap='RdYlGn', vmin=-5, vmax=5),
-                use_container_width=True,
-                height=400
-            )
-
-            # Botón Descarga Tab 1
-            buffer_h = io.BytesIO()
-            with pd.ExcelWriter(buffer_h, engine='xlsxwriter') as writer:
-                df_h_show.to_excel(writer, index=False, sheet_name='Ajuste Horas')
+            # Aplicar filtro usuario
+            df_mat_final = df_mat[
+                (df_mat['Estado'] != 'OK') & 
+                (abs(df_mat['% Desvio']) >= tolerancia_filtro)
+            ].copy()
             
-            st.download_button(
-                label="📥 Descargar Reporte de Horas (.xlsx)",
-                data=buffer_h.getvalue(),
-                file_name="Ajuste_Horas_SAP.xlsx",
-                mime="application/vnd.ms-excel"
-            )
-
-        # --- TAB 2: MATERIALES ---
-        with tab2:
-            st.subheader(f"Control de Materiales (Merma: {merma_input*100}%)")
+            # Columnas a mostrar (Busca columnas originales de nombre/texto si existen)
+            col_material = buscar_col(df_mat, ['material'])
+            col_texto = buscar_col(df_mat, ['texto', 'descrip'])
             
-            # KPIs
-            col_m1, col_m2 = st.columns(2)
-            mat_criticos = len(df_mat_final[df_mat_final['Estado'] == 'EXCEDENTE'])
-            mat_falta = len(df_mat_final[df_mat_final['Estado'] == 'FALTA CARGAR'])
+            cols_export = ['Orden_Key']
+            if col_material: cols_export.append(col_material)
+            if col_texto: cols_export.append(col_texto)
+            cols_export.extend(['Nec_Num', 'Tom_Num', 'Estado', 'Ajuste', '% Desvio'])
             
-            col_m1.metric("Materiales con Excedente Crítico", mat_criticos, border=True)
-            col_m2.metric("Materiales Pendientes de Carga", mat_falta, border=True)
+            df_mat_view = df_mat_final[cols_export].copy()
+            df_mat_view.rename(columns={'Orden_Key': 'Orden', 'Nec_Num': 'Necesaria', 'Tom_Num': 'Tomada'}, inplace=True)
 
-            st.write("### 📋 Detalle de Desvíos")
+            # ----------------------------------------------------
+            # VISUALIZACIÓN (DASHBOARD)
+            # ----------------------------------------------------
             
-            # Selección de columnas para ver online
-            cols_ver = ['Orden', 'Material', 'Texto breve material', 'Cantidad necesaria', 
-                        'Cantidad tomada', 'Estado', 'Ajuste_Sugerido', '% Desvio']
+            tab1, tab2 = st.tabs(["⏱️ Corrección Horas", "📦 Corrección Materiales"])
             
-            # Colores dinámicos
-            def color_estado(val):
-                color = '#ffcccb' if val == 'EXCEDENTE' else '#fff4cc' # Rojo suave o Naranja suave
-                return f'background-color: {color}; color: black'
+            with tab1:
+                col1, col2 = st.columns(2)
+                col1.metric("Órdenes con Error", len(df_horas_final))
+                col2.metric("Total Horas a Ajustar (Abs)", f"{df_horas_final['Ajuste Necesario'].abs().sum():.2f}")
+                
+                st.dataframe(
+                    df_horas_final.style.background_gradient(subset=['Ajuste Necesario'], cmap='RdYlGn', vmin=-10, vmax=10)
+                    .format({'Horas SAP': '{:.2f}', 'Horas Reales': '{:.2f}', 'Ajuste Necesario': '{:+.2f}'}),
+                    use_container_width=True
+                )
+                
+                # Descarga Excel
+                buffer_h = io.BytesIO()
+                with pd.ExcelWriter(buffer_h) as writer:
+                    df_horas_final.to_excel(writer, index=False)
+                st.download_button("📥 Descargar Excel Horas", buffer_h.getvalue(), "Correccion_Horas.xlsx")
 
-            st.dataframe(
-                df_mat_final[cols_ver].style.format({
-                    'Cantidad necesaria': '{:.2f}',
-                    'Cantidad tomada': '{:.2f}',
-                    'Ajuste_Sugerido': '{:.2f}',
-                    '% Desvio': '{:.1f}%'
-                }).applymap(color_estado, subset=['Estado']),
-                use_container_width=True,
-                height=500
-            )
+            with tab2:
+                col1, col2 = st.columns(2)
+                col1.metric("Materiales a Revisar", len(df_mat_view))
+                criticos = len(df_mat_view[df_mat_view['Estado']=='EXCEDENTE'])
+                col2.metric("Excedentes Críticos", criticos, delta_color="inverse")
+                
+                def color_mat(val):
+                    if val == 'EXCEDENTE': return 'color: red; font-weight: bold'
+                    if val == 'FALTA CARGAR': return 'color: orange; font-weight: bold'
+                    return ''
+                
+                st.dataframe(
+                    df_mat_view.style.applymap(color_mat, subset=['Estado'])
+                    .format({'Necesaria': '{:.3f}', 'Tomada': '{:.3f}', 'Ajuste': '{:.3f}', '% Desvio': '{:.1f}%'}),
+                    use_container_width=True
+                )
+                
+                buffer_m = io.BytesIO()
+                with pd.ExcelWriter(buffer_m) as writer:
+                    df_mat_view.to_excel(writer, index=False)
+                st.download_button("📥 Descargar Excel Materiales", buffer_m.getvalue(), "Correccion_Materiales.xlsx")
 
-            # Botón Descarga Tab 2
-            buffer_m = io.BytesIO()
-            with pd.ExcelWriter(buffer_m, engine='xlsxwriter') as writer:
-                df_mat_final.to_excel(writer, index=False, sheet_name='Ajuste Materiales')
-            
-            st.download_button(
-                label="📥 Descargar Reporte de Materiales (.xlsx)",
-                data=buffer_m.getvalue(),
-                file_name="Ajuste_Materiales_SAP.xlsx",
-                mime="application/vnd.ms-excel"
-            )
+        except Exception as e:
+            st.error(f"Ocurrió un error inesperado en el procesamiento: {e}")
+            st.write("Detalle técnico:", e)
+    else:
+        st.warning("No se pudieron leer correctamente los archivos. Verifica que no estén corruptos.")
 
-    except Exception as e:
-        st.error(f"⚠️ Error al procesar: {e}")
-        st.write("Por favor revisa que los encabezados de los archivos Excel sean los correctos.")
 else:
-    # Mensaje de bienvenida cuando no hay archivos
-    st.info("👈 Por favor, carga los 4 archivos en el menú lateral para comenzar el análisis.")
+    st.info("Esperando archivos... (Sube los 4 archivos en el menú lateral)")
