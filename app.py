@@ -188,46 +188,73 @@ if f_mat and f_prod and f_real and f_sap_t:
         )
         df_final_t = df_t[df_t['Accion'] != 'OK'].sort_values('Diff', ascending=False)
 
-        # ------------------------------------
-        # RESULTADOS
-        # ------------------------------------
-        st.divider()
-        tab1, tab2 = st.tabs(["📦 Materiales", "⏱️ Tiempos"])
-        
-        with tab1:
-            st.write(f"**Registros encontrados:** {len(df_final_m)}")
-            
-            # Verificación visual para ti:
-            if st.checkbox("Ver detalle de cálculo (Debug)"):
-                st.write(df_final_m[['KEY', 'Nec', 'Plan', 'Hecha', 'Coef', 'Teorico_Calc']].head())
-            
-            def color_m(val):
-                if val == 'EXCEDENTE': return 'background-color: #ffcdd2; color: black'
-                if val == 'FALTA CARGAR': return 'background-color: #ffeeb0; color: black'
-                return ''
-            
-            # Elegimos columnas finales
-            cols_show = ['KEY', col_mat_desc, 'Origen', 'Hecha', 'Teorico_Calc', 'Tom', 'Estado', 'Diff']
-            st.dataframe(df_final_m[cols_show].style.applymap(color_m, subset=['Estado']), use_container_width=True)
-            
-            # Descarga
-            b = io.BytesIO()
-            with pd.ExcelWriter(b) as w: df_final_m.to_excel(w, index=False)
-            st.download_button("Descargar Excel Materiales", b.getvalue(), "Materiales.xlsx")
+       # ------------------------------------
+    # RESULTADOS VISUALES
+    # ------------------------------------
+    st.divider()
+    st.subheader("📊 Resultados del Análisis")
 
-        with tab2:
-            st.write(f"**Diferencias encontradas:** {len(df_final_t)}")
-            
-            def color_t(val):
-                if val > 0: return 'background-color: #ffeeb0; color: black'
-                if val < 0: return 'background-color: #ffcdd2; color: black'
-                return ''
-            
-            st.dataframe(df_final_t.style.applymap(color_t, subset=['Diff']), use_container_width=True)
-            
-            b2 = io.BytesIO()
-            with pd.ExcelWriter(b2) as w: df_final_t.to_excel(w, index=False)
-            st.download_button("Descargar Excel Tiempos", b2.getvalue(), "Tiempos.xlsx")
+    tab1, tab2 = st.tabs(["📦 Materiales (Cantidades)", "⏱️ Tiempos (Horas)"])
+    
+    with tab1:
+        st.write(f"**Registros encontrados:** {len(df_final_m)}")
+        
+        # Checkbox para ver datos crudos si hace falta
+        if st.checkbox("Ver detalle de cálculo (Debug)"):
+            st.write(df_final_m[['KEY', 'Nec', 'Plan', 'Hecha', 'Coef', 'Teorico_Calc']].head())
+        
+        # 1. FUNCIÓN DE COLORES
+        def color_m(val):
+            if val == 'EXCEDENTE': return 'background-color: #ffcdd2; color: black' # Rojo suave
+            if val == 'FALTA CARGAR': return 'background-color: #ffeeb0; color: black' # Amarillo suave
+            return ''
+        
+        # 2. SELECCIÓN DE COLUMNAS
+        cols_show = ['KEY', col_mat_desc, 'Origen', 'Hecha', 'Teorico_Calc', 'Tom', 'Estado', 'Diff', '% Desvio']
+        
+        # 3. VISUALIZACIÓN CON FORMATO AMIGABLE
+        # Usamos .format() para que se vea bonito (miles con coma, decimales con punto)
+        st.dataframe(
+            df_final_m[cols_show].style
+            .applymap(color_m, subset=['Estado'])
+            .format({
+                'Hecha': '{:,.0f}',          # Ej: 1,500 (Sin decimales)
+                'Teorico_Calc': '{:,.2f}',   # Ej: 1,500.50 (2 decimales)
+                'Tom': '{:,.2f}',            # Ej: 1,600.00
+                'Diff': '{:+,.2f}',          # Ej: +99.50 (Con signo + o -)
+                '% Desvio': '{:.1f}%'        # Ej: 5.2%
+            }),
+            use_container_width=True,
+            height=500
+        )
+        
+        # Descarga
+        b = io.BytesIO()
+        with pd.ExcelWriter(b) as w: df_final_m.to_excel(w, index=False)
+        st.download_button("📥 Descargar Excel Materiales", b.getvalue(), "Materiales.xlsx")
+
+    with tab2:
+        st.write(f"**Diferencias encontradas:** {len(df_final_t)}")
+        
+        def color_t(val):
+            if val > 0: return 'background-color: #ffeeb0; color: black'
+            if val < 0: return 'background-color: #ffcdd2; color: black'
+            return ''
+        
+        st.dataframe(
+            df_final_t.style
+            .applymap(color_t, subset=['Diff'])
+            .format({
+                'V_Sap': '{:,.2f}',
+                'V_Real': '{:,.2f}',
+                'Diff': '{:+,.2f}' # Muestra el signo + siempre
+            }),
+            use_container_width=True
+        )
+        
+        b2 = io.BytesIO()
+        with pd.ExcelWriter(b2) as w: df_final_t.to_excel(w, index=False)
+        st.download_button("📥 Descargar Excel Tiempos", b2.getvalue(), "Tiempos.xlsx")
 
 else:
     st.info("Sube los archivos y espera a que aparezcan los selectores de columnas.")
