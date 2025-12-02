@@ -54,10 +54,14 @@ def index_col(df, keywords):
     return 0
 
 # --- SIDEBAR (CON LOGO) ---
+try:
     # width=250 define el tamaño en píxeles. Cámbialo si lo quieres más grande o chico.
     st.sidebar.image("logo.png", width=200) 
+except:
+    st.sidebar.warning("Falta archivo 'logo.png'.")
 
 st.sidebar.header("1. Carga de Archivos")
+# ... el resto sigue igual
 # ... el resto sigue igual
 f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
 f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
