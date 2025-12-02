@@ -2,17 +2,17 @@ import streamlit as st
 import pandas as pd
 import io
 import numpy as np
+import re
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Control Producción Final", layout="wide", page_icon="🏭")
-st.title("🏭 Dashboard de Control de Producción")
-st.markdown("Si ves ceros donde no debería, revisa la pestaña **'🕵️ Diagnóstico'** al final.")
+st.set_page_config(page_title="Control Producción Pro", layout="wide", page_icon="🏭")
+st.title("🏭 Dashboard de Control: Merma Dinámica")
+st.markdown("Ahora la merma se lee directamente del archivo de materiales.")
 
 # --- FUNCIONES ROBUSTAS ---
 def cargar_excel_simple(file):
     if not file: return None
     try:
-        # Detectar encabezado automáticamente
         df_temp = pd.read_excel(file, header=None, nrows=15)
         max_cols = 0
         header_row = 0
@@ -21,45 +21,41 @@ def cargar_excel_simple(file):
             if non_na > max_cols:
                 max_cols = non_na
                 header_row = i
-        
-        # Cargar dataframe real
         df = pd.read_excel(file, header=header_row)
-        # Convertir columnas a string y limpiar espacios del nombre
         df.columns = df.columns.astype(str).str.strip().str.replace('\n', ' ')
         return df
     except: return None
 
 def clean_key(val):
     """
-    Limpieza agresiva de la Orden para asegurar el cruce.
-    Ej: '000202467.0 ' -> '202467'
+    LIMPIEZA NUCLEAR DE LLAVES:
+    Intenta extraer solo los números para garantizar que '00202467' sea igual a '202467'.
     """
-    val = str(val).strip()     # Quitar espacios
-    val = val.split('.')[0]    # Quitar decimales (.0)
-    val = val.lstrip('0')      # Quitar ceros a la izquierda (Clave para SAP)
-    return val
+    val = str(val).strip()
+    # Si tiene punto decimal, lo quitamos antes de nada (202467.0 -> 202467)
+    if '.' in val:
+        val = val.split('.')[0]
+    
+    # Intentamos sacar solo dígitos
+    digits = re.findall(r'\d+', val)
+    if digits:
+        # Unimos los dígitos y convertimos a int para matar ceros a la izquierda
+        # Luego volvemos a string para usar como key
+        num_limpio = "".join(digits)
+        return str(int(num_limpio))
+    
+    # Si es alfanumérico puro, devolvemos limpio
+    return val.upper()
 
 def clean_num(val):
-    """Convierte texto 1.000,00 o 1,000.00 a float"""
     if pd.isna(val): return 0.0
     if isinstance(val, (int, float)): return float(val)
     if isinstance(val, str):
         val = val.upper().strip()
-        # Eliminar unidades de medida
         for u in ['KG', 'CJ', 'HRA', 'HR', 'UN', 'M', 'L', '%', ' ']: 
             val = val.replace(u, '')
-        
-        # Detectar formato: 
-        # Si tiene punto y coma, asumimos formato europeo 1.000,00
-        if '.' in val and ',' in val:
-            val = val.replace('.', '').replace(',', '.')
-        # Si solo tiene coma y son decimales (ej 50,5) -> 50.5
-        elif ',' in val and '.' not in val:
-            val = val.replace(',', '.')
-        # Si solo tiene puntos (ej 1.000) asumimos miles -> 1000
-        elif val.count('.') == 1 and len(val.split('.')[1]) == 3:
-             val = val.replace('.', '')
-             
+        if '.' in val and ',' in val: val = val.replace('.', '').replace(',', '.')
+        elif ',' in val: val = val.replace(',', '.')
         try: return float(val)
         except: return 0.0
     return 0.0
@@ -77,9 +73,6 @@ f_prod = st.sidebar.file_uploader("Producción", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales", type=["xlsx"])
 f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
 
-st.sidebar.divider()
-merma = st.sidebar.number_input("Merma (%)", 0.0, 20.0, 3.0, 0.1) / 100
-
 # --- LÓGICA ---
 if f_mat and f_prod and f_real and f_sap_t:
     
@@ -88,7 +81,10 @@ if f_mat and f_prod and f_real and f_sap_t:
     df_real = cargar_excel_simple(f_real)
     df_sap_t = cargar_excel_simple(f_sap_t)
 
+    st.divider()
     st.subheader("🛠️ Mapeo de Columnas")
+    
+    # Usamos container para organizar mejor
     c1, c2, c3, c4 = st.columns(4)
     
     with c1:
@@ -97,12 +93,13 @@ if f_mat and f_prod and f_real and f_sap_t:
         col_m_nec = st.selectbox("Necesaria", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
         col_m_tom = st.selectbox("Real/Tomada", df_mat.columns, index=index_col(df_mat, ['tomada', 'real']), key='mt')
         col_m_desc = st.selectbox("Descripción", df_mat.columns, index=index_col(df_mat, ['texto', 'desc', 'material']), key='md')
+        # NUEVO SELECTOR DE MERMA
+        col_m_merma = st.selectbox("Merma/Rechazo %", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
 
     with c2:
         st.info("🏭 Producción")
         col_p_ord = st.selectbox("Orden", df_prod.columns, index=index_col(df_prod, ['orden']), key='po')
-        # ¡IMPORTANTE! Asegúrate de elegir la columna de "Confirmada" o "Real"
-        col_p_hech = st.selectbox("Cajas Reales (Hechas)", df_prod.columns, index=index_col(df_prod, ['buena', 'real', 'confirmada']), key='ph')
+        col_p_hech = st.selectbox("Cajas Reales", df_prod.columns, index=index_col(df_prod, ['buena', 'real', 'confirmada']), key='ph')
         col_p_plan = st.selectbox("Cajas Plan", df_prod.columns, index=index_col(df_prod, ['orden', 'plan']), key='pp')
 
     with c3:
@@ -118,7 +115,7 @@ if f_mat and f_prod and f_real and f_sap_t:
     st.divider()
 
     if st.button("🔄 PROCESAR INFORMACIÓN", type="primary"):
-        # 1. Limpieza de LLAVES (Crucial para que cruce el 202467)
+        # 1. Limpieza de LLAVES (NUCLEAR)
         df_mat['KEY'] = df_mat[col_m_ord].apply(clean_key)
         df_prod['KEY'] = df_prod[col_p_ord].apply(clean_key)
         df_real['KEY'] = df_real[col_r_ord].apply(clean_key)
@@ -127,35 +124,43 @@ if f_mat and f_prod and f_real and f_sap_t:
         # 2. Limpieza de VALORES
         df_mat['_Sys_Nec'] = df_mat[col_m_nec].apply(clean_num)
         df_mat['_Sys_Tom'] = df_mat[col_m_tom].apply(clean_num)
-        df_prod['_Sys_Hecha'] = df_prod[col_p_hech].apply(clean_num) # Aquí lee las 4928 cajas
+        # NUEVO: Limpiamos la columna de merma del archivo
+        df_mat['_Sys_Merma'] = df_mat[col_m_merma].apply(clean_num)
+        
+        df_prod['_Sys_Hecha'] = df_prod[col_p_hech].apply(clean_num)
         df_prod['_Sys_Plan'] = df_prod[col_p_plan].apply(clean_num)
         df_real['_Sys_Real'] = df_real[col_r_val].apply(clean_num)
         df_sap_t['_Sys_Sap'] = df_sap_t[col_s_val].apply(clean_num)
 
-        # 3. Agrupar Producción (Para tener 1 sola fila por orden)
+        # 3. Agrupar Producción
         prod_g = df_prod.groupby('KEY')[['_Sys_Plan', '_Sys_Hecha']].sum().reset_index()
 
-        # 4. Cruce (Merge)
+        # 4. Cruce (Merge) - Usamos LEFT para mantener todos los materiales
         df_m = pd.merge(df_mat, prod_g, on='KEY', how='left')
         
-        # Diagnóstico interno: Marcar origen
-        df_m['_Origen'] = np.where(df_m['_Sys_Plan'].notna(), 'Cruce OK', 'No Cruzó')
-        
-        # Llenar ceros
+        # Llenar nulos si no cruzó
         df_m['_Sys_Plan'] = df_m['_Sys_Plan'].fillna(0)
         df_m['_Sys_Hecha'] = df_m['_Sys_Hecha'].fillna(0)
-        
-        # 5. Cálculos
+        df_m['_Origen'] = np.where(df_m['_Sys_Plan'] > 0, 'Cruce OK', 'Sin Prod')
+
+        # 5. CÁLCULOS DINÁMICOS
+        # Coeficiente
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
+        
+        # Teórico (Si hay prod, ajustamos. Si no, usamos el original)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
-        df_m['Max_Perm'] = df_m['Teorico'] * (1 + merma)
+        
+        # LÓGICA DE MERMA POR FILA (Divide por 100 asumiendo que el archivo trae enteros ej: 3 para 3%)
+        # Si el archivo trae 0.03, cambia el 100 por 1.
+        df_m['Max_Perm'] = df_m['Teorico'] * (1 + (df_m['_Sys_Merma'] / 100))
+        
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
         df_m['Pct_Desvio'] = np.where(df_m['Teorico'] > 0, (df_m['Diff_Kg'] / df_m['Teorico'])*100, 0)
         
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
 
-        # Guardar en session
+        # Guardar Session
         st.session_state['data_mat'] = df_m
         st.session_state['col_desc_name'] = col_m_desc
         
@@ -185,21 +190,25 @@ if f_mat and f_prod and f_real and f_sap_t:
         with col_f2:
             min_v, max_v = df_m['Pct_Desvio'].min(), df_m['Pct_Desvio'].max()
             if min_v == max_v: min_v -= 1; max_v += 1
-            rango = st.slider("Rango Desvío %:", min_v, max_v, (min_v, max_v))
+            rango = st.slider("Rango Desvío %:", float(min_v), float(max_v), (float(min_v), float(max_v)))
             df_m = df_m[(df_m['Pct_Desvio'] >= rango[0]) & (df_m['Pct_Desvio'] <= rango[1])]
 
         df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-        # Renombrar
+        # Renombrar con el campo de Merma incluido
         cols_map = {
             'KEY': 'Orden', col_desc: 'Material', 
-            '_Sys_Hecha': 'Cajas Producidas', 'Teorico': 'Consumo Teórico', 
-            '_Sys_Tom': 'Consumo Real', 'Diff_Kg': 'Diferencia (Kg)', 
-            'Pct_Desvio': '% Desvío', 'Estado': 'Estado', '_Origen': 'Info Cruce'
+            '_Sys_Hecha': 'Cajas Prod.', '_Sys_Merma': 'Merma Std %',
+            'Teorico': 'Cons. Teórico', 
+            '_Sys_Tom': 'Cons. Real', 'Diff_Kg': 'Diferencia (Kg)', 
+            'Pct_Desvio': '% Desvío', 'Estado': 'Estado'
         }
-        df_final = df_show_m[list(cols_map.keys())].rename(columns=cols_map)
+        
+        # Seleccionar solo columnas existentes
+        cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
+        df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
-        tab1, tab2, tab3 = st.tabs(["📦 Materiales", "⏱️ Tiempos", "🕵️ Diagnóstico de Cruce"])
+        tab1, tab2, tab3 = st.tabs(["📦 Materiales", "⏱️ Tiempos", "🕵️ Diagnóstico"])
         
         with tab1:
             st.markdown(f"**Registros:** {len(df_final)}")
@@ -211,53 +220,48 @@ if f_mat and f_prod and f_real and f_sap_t:
             st.dataframe(
                 df_final.style.applymap(style_m, subset=['Estado'])
                 .format({
-                    'Cajas Producidas': '{:,.0f}', 'Consumo Teórico': '{:,.2f}',
-                    'Consumo Real': '{:,.2f}', 'Diferencia (Kg)': '{:+,.2f}',
+                    'Cajas Prod.': '{:,.0f}', 'Cons. Teórico': '{:,.2f}', 'Merma Std %': '{:,.1f}',
+                    'Cons. Real': '{:,.2f}', 'Diferencia (Kg)': '{:+,.2f}',
                     '% Desvío': '{:.2f}%'
-                }), use_container_width=True, height=500
+                }), use_container_width=True, height=600
             )
             b = io.BytesIO()
             with pd.ExcelWriter(b) as w: df_final.to_excel(w, index=False)
             st.download_button("📥 Excel Materiales", b.getvalue(), "Reporte_Mat.xlsx")
 
         with tab2:
-            ver_ok = st.checkbox("Ver diferencias 0")
-            if not ver_ok: df_t = df_t[abs(df_t['Diff_Hr']) > 0.05]
-            
+            df_show_t = df_t[abs(df_t['Diff_Hr']) > 0.05].copy()
             cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Hr':'Diferencia'}
-            df_show_t = df_t[list(cols_t.keys())].rename(columns=cols_t)
+            df_show_t = df_show_t.rename(columns=cols_t)
             
             def style_t(val):
-                if val > 0: return 'background-color: #fff4cc; color: black'
-                if val < 0: return 'background-color: #ffcccc; color: black'
-                return ''
+                return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
             
             st.dataframe(
-                df_show_t.style.applymap(style_t, subset=['Diferencia'])
+                df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
                 .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
                 use_container_width=True
             )
 
         with tab3:
-            st.write("### 🕵️ ¿Por qué veo ceros?")
-            st.write("Verifica aquí si la Orden 202467 aparece en ambos lados con el mismo formato.")
-            
-            check_order = st.text_input("Buscar Orden Específica (ej: 202467):")
+            st.write("### ¿Por qué veo ceros en Cajas Producidas?")
+            st.info("La nueva limpieza 'NUCLEAR' debería haberlo arreglado. Busca tu orden aquí:")
+            check_order = st.text_input("Buscar Orden (ej: 202467):")
             
             c_d1, c_d2 = st.columns(2)
             with c_d1:
-                st.write("**En Archivo Producción:**")
-                st.dataframe(df_prod[['KEY', col_p_hech, '_Sys_Hecha']].head())
+                st.write(f"**Archivo Producción (Orden Limpia):**")
                 if check_order:
-                    st.write(f"Buscando '{check_order}' en Producción:")
-                    st.dataframe(df_prod[df_prod['KEY'].str.contains(check_order)])
-            
+                    st.dataframe(df_prod[df_prod['KEY'].str.contains(check_order)][['KEY', '_Sys_Hecha']])
+                else:
+                    st.dataframe(df_prod[['KEY', '_Sys_Hecha']].head())
+
             with c_d2:
-                st.write("**En Archivo Materiales:**")
-                st.dataframe(df_mat[['KEY']].drop_duplicates().head())
+                st.write(f"**Archivo Materiales (Orden Limpia):**")
                 if check_order:
-                    st.write(f"Buscando '{check_order}' en Materiales:")
-                    st.dataframe(df_mat[df_mat['KEY'].str.contains(check_order)][['KEY', col_m_nec]].head())
+                    st.dataframe(df_mat[df_mat['KEY'].str.contains(check_order)][['KEY', '_Sys_Nec']])
+                else:
+                    st.dataframe(df_mat[['KEY', '_Sys_Nec']].head())
 
 else:
     st.info("Carga archivos para empezar.")
