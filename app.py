@@ -53,7 +53,14 @@ def index_col(df, keywords):
         if any(k in col for k in keywords): return i
     return 0
 
-# --- SIDEBAR ---
+# --- SIDEBAR (CON LOGO) ---
+# Aquí cargamos el logo. Asegúrate de tener el archivo "logo.png" en la carpeta
+# o cambia "logo.png" por la URL de la imagen.
+try:
+    st.sidebar.image("https://github.com/supercito/ga/blob/main/logo.png", use_container_width=True) 
+except:
+    st.sidebar.warning("Sube una imagen llamada 'logo.png' a la carpeta para ver el logo aquí.")
+
 st.sidebar.header("1. Carga de Archivos")
 f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
 f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
@@ -127,12 +134,11 @@ if f_mat and f_prod and f_real and f_sap_t:
         # CÁLCULOS MATERIALES
         # ----------------------------------------
         
-        # 1. Teórico Dinámico (ajustado a cajas reales)
+        # 1. Teórico Dinámico
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
         # 2. Merma Permitida (Kilos)
-        # Calculamos cuántos KG representa el porcentaje de merma
         df_m['Cant_Merma_Kg'] = df_m['Teorico'] * (df_m['_Sys_Merma'] / 100)
         
         # 3. Límite Máximo Permitido
@@ -145,9 +151,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
 
-        # 5. CANTIDAD A AJUSTAR (NUEVO REQUERIMIENTO)
-        # Si Falta Cargar -> Diferencia entre Teórico y Real
-        # Si Excedente -> Diferencia entre Real y Máximo Permitido
+        # 5. Cantidad a Ajustar
         df_m['Cant_Ajuste'] = np.select(
             [df_m['Estado'] == 'FALTA CARGAR', df_m['Estado'] == 'EXCEDENTE'],
             [df_m['Teorico'] - df_m['_Sys_Tom'], df_m['_Sys_Tom'] - df_m['Max_Perm']],
@@ -189,6 +193,7 @@ if f_mat and f_prod and f_real and f_sap_t:
                 if excluir: df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
 
             with col_f2:
+                # Slider Rango %
                 min_v, max_v = df_m['Pct_Desvio'].min(), df_m['Pct_Desvio'].max()
                 if min_v == max_v: min_v -= 1; max_v += 1
                 min_v, max_v = float(min_v), float(max_v)
@@ -203,11 +208,11 @@ if f_mat and f_prod and f_real and f_sap_t:
                 'KEY': 'Orden', 
                 col_desc: 'Material', 
                 '_Sys_Hecha': 'Cajas Prod.', 
-                '_Sys_Merma': 'Merma %',             # Muestra el % del archivo
-                'Cant_Merma_Kg': 'Cant. Merma',      # Muestra los Kilos calculados
+                '_Sys_Merma': 'Merma %',             
+                'Cant_Merma_Kg': 'Cant. Merma',      
                 'Teorico': 'Cons. Teórico', 
                 '_Sys_Tom': 'Cons. Real', 
-                'Cant_Ajuste': 'Cant. a Ajustar',    # Muestra cuánto corregir
+                'Cant_Ajuste': 'Cant. a Ajustar',    
                 'Estado': 'Estado'
             }
             
@@ -223,8 +228,8 @@ if f_mat and f_prod and f_real and f_sap_t:
                 st.write(f"**{len(df_final)} registros encontrados.**")
                 
                 def style_m(val):
-                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
-                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
+                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black' # Rojo
+                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black' # Amarillo
                     return ''
                 
                 st.dataframe(
