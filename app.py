@@ -9,11 +9,11 @@ st.set_page_config(page_title="Control Producción Final", layout="wide", page_i
 st.title("🏭 Dashboard de Control: Merma Dinámica")
 st.markdown("Ahora la merma se lee directamente del archivo de materiales.")
 
-# --- FUNCIONES ROBUSTAS ---
+# --- FUNCIONES DE CARGA Y LIMPIEZA ---
 def cargar_excel_simple(file):
     if not file: return None
     try:
-        # Detectar dónde empieza el encabezado
+        # Detectar automáticamente dónde empieza el encabezado
         df_temp = pd.read_excel(file, header=None, nrows=15)
         max_cols = 0
         header_row = 0
@@ -31,7 +31,7 @@ def clean_key(val):
     """LIMPIEZA NUCLEAR DE LLAVES (Solo números)"""
     val = str(val).strip()
     if '.' in val: val = val.split('.')[0]
-    # Extraer solo dígitos para evitar problemas de ceros izq o letras
+    # Extraer solo dígitos
     digits = re.findall(r'\d+', val)
     if digits:
         num_limpio = "".join(digits)
@@ -64,10 +64,10 @@ f_prod = st.sidebar.file_uploader("Producción", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales", type=["xlsx"])
 f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
 
-# --- LÓGICA ---
+# --- LÓGICA PRINCIPAL ---
 if f_mat and f_prod and f_real and f_sap_t:
     
-    # 1. Cargar Archivos
+    # 1. Cargar
     df_mat = cargar_excel_simple(f_mat)
     df_prod = cargar_excel_simple(f_prod)
     df_real = cargar_excel_simple(f_real)
@@ -104,8 +104,9 @@ if f_mat and f_prod and f_real and f_sap_t:
 
     st.divider()
 
-    # BOTÓN DE PROCESAMIENTO
+    # BOTÓN PROCESAR
     if st.button("🔄 PROCESAR INFORMACIÓN", type="primary"):
+        
         # 1. Limpieza de LLAVES
         df_mat['KEY'] = df_mat[col_m_ord].apply(clean_key)
         df_prod['KEY'] = df_prod[col_p_ord].apply(clean_key)
@@ -134,7 +135,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
-        # Merma (dinámica por fila)
+        # Merma Dinámica
         df_m['Max_Perm'] = df_m['Teorico'] * (1 + (df_m['_Sys_Merma'] / 100))
         
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
@@ -143,122 +144,121 @@ if f_mat and f_prod and f_real and f_sap_t:
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
 
-        # 6. Cruce Tiempos
+        # 6. Tiempos
         t_r = df_real.groupby('KEY')['_Sys_Real'].sum().reset_index()
         t_s = df_sap_t.groupby('KEY')['_Sys_Sap'].sum().reset_index()
         df_t = pd.merge(t_s, t_r, on='KEY', how='outer').fillna(0)
         df_t['Diff_Hr'] = df_t['_Sys_Real'] - df_t['_Sys_Sap']
 
-        # === GUARDAR EN SESSION STATE (USANDO .COPY() PARA EVITAR EL KEYERROR) ===
+        # === GUARDADO SEGURO EN SESSION STATE ===
         st.session_state['data_mat'] = df_m.copy()
         st.session_state['data_time'] = df_t.copy()
-        
-        # Guardamos versiones debug SEGURAS (solo lo necesario)
         st.session_state['debug_prod'] = df_prod[['KEY', '_Sys_Hecha']].copy()
         st.session_state['debug_mat'] = df_mat[['KEY', '_Sys_Nec']].copy()
-        
         st.session_state['col_desc_name'] = col_m_desc
         st.session_state['processed'] = True
 
     # --- VISUALIZACIÓN ---
     if st.session_state.get('processed', False):
-        # Recuperar datos
-        df_m = st.session_state['data_mat']
-        df_t = st.session_state['data_time']
-        debug_prod = st.session_state['debug_prod']
-        debug_mat = st.session_state['debug_mat']
-        col_desc = st.session_state['col_desc_name']
+        # Recuperación segura con .get() para evitar KeyErrors
+        df_m = st.session_state.get('data_mat', pd.DataFrame())
+        df_t = st.session_state.get('data_time', pd.DataFrame())
+        debug_prod = st.session_state.get('debug_prod', pd.DataFrame())
+        debug_mat = st.session_state.get('debug_mat', pd.DataFrame())
+        col_desc = st.session_state.get('col_desc_name', 'Material')
 
-        st.divider()
-        col_f1, col_f2 = st.columns(2)
-        with col_f1:
-            # Filtro Materiales
-            lista_raw = df_m[col_desc].dropna().unique()
-            lista_materiales = sorted([str(x) for x in lista_raw])
-            excluir = st.multiselect("Ignorar materiales:", lista_materiales)
-            if excluir: df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
+        if df_m.empty:
+            st.warning("No hay datos procesados. Por favor presiona 'Procesar Información' nuevamente.")
+        else:
+            st.divider()
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                # Filtro Materiales
+                lista_raw = df_m[col_desc].dropna().unique()
+                lista_materiales = sorted([str(x) for x in lista_raw])
+                excluir = st.multiselect("Ignorar materiales:", lista_materiales)
+                if excluir: df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
 
-        with col_f2:
-            # Filtro Porcentaje
-            min_v, max_v = df_m['Pct_Desvio'].min(), df_m['Pct_Desvio'].max()
-            if min_v == max_v: min_v -= 1; max_v += 1
-            rango = st.slider("Rango Desvío %:", float(min_v), float(max_v), (float(min_v), float(max_v)))
-            df_m = df_m[(df_m['Pct_Desvio'] >= rango[0]) & (df_m['Pct_Desvio'] <= rango[1])]
+            with col_f2:
+                # Filtro Porcentaje
+                min_v, max_v = df_m['Pct_Desvio'].min(), df_m['Pct_Desvio'].max()
+                if min_v == max_v: min_v -= 1; max_v += 1
+                # Asegurar floats
+                min_v, max_v = float(min_v), float(max_v)
+                rango = st.slider("Rango Desvío %:", min_v, max_v, (min_v, max_v))
+                df_m = df_m[(df_m['Pct_Desvio'] >= rango[0]) & (df_m['Pct_Desvio'] <= rango[1])]
 
-        df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
+            df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-        # Mapeo de columnas para mostrar
-        cols_map = {
-            'KEY': 'Orden', col_desc: 'Material', 
-            '_Sys_Hecha': 'Cajas Prod.', '_Sys_Merma': 'Merma Std %',
-            'Teorico': 'Cons. Teórico', 
-            '_Sys_Tom': 'Cons. Real', 'Diff_Kg': 'Diferencia (Kg)', 
-            'Pct_Desvio': '% Desvío', 'Estado': 'Estado'
-        }
-        
-        cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
-        df_final = df_show_m[cols_finales].rename(columns=cols_map)
-
-        tab1, tab2, tab3 = st.tabs(["📦 Materiales", "⏱️ Tiempos", "🕵️ Diagnóstico"])
-        
-        with tab1:
-            st.markdown(f"**Registros:** {len(df_final)}")
-            def style_m(val):
-                if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
-                if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
-                return ''
+            cols_map = {
+                'KEY': 'Orden', col_desc: 'Material', 
+                '_Sys_Hecha': 'Cajas Prod.', '_Sys_Merma': 'Merma Std %',
+                'Teorico': 'Cons. Teórico', 
+                '_Sys_Tom': 'Cons. Real', 'Diff_Kg': 'Diferencia (Kg)', 
+                'Pct_Desvio': '% Desvío', 'Estado': 'Estado'
+            }
             
-            st.dataframe(
-                df_final.style.applymap(style_m, subset=['Estado'])
-                .format({
-                    'Cajas Prod.': '{:,.0f}', 'Cons. Teórico': '{:,.2f}', 'Merma Std %': '{:,.1f}',
-                    'Cons. Real': '{:,.2f}', 'Diferencia (Kg)': '{:+,.2f}',
-                    '% Desvío': '{:.2f}%'
-                }), use_container_width=True, height=600
-            )
-            b = io.BytesIO()
-            with pd.ExcelWriter(b) as w: df_final.to_excel(w, index=False)
-            st.download_button("📥 Excel Materiales", b.getvalue(), "Reporte_Mat.xlsx")
+            # Filtrar columnas que existen
+            cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
+            df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
-        with tab2:
-            df_show_t = df_t[abs(df_t['Diff_Hr']) > 0.05].copy()
-            cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Hr':'Diferencia'}
-            df_show_t = df_show_t.rename(columns=cols_t)
+            tab1, tab2, tab3 = st.tabs(["📦 Materiales", "⏱️ Tiempos", "🕵️ Diagnóstico"])
             
-            def style_t(val):
-                return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
-            
-            st.dataframe(
-                df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
-                .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
-                use_container_width=True
-            )
+            with tab1:
+                st.markdown(f"**Registros:** {len(df_final)}")
+                def style_m(val):
+                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
+                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
+                    return ''
+                
+                st.dataframe(
+                    df_final.style.applymap(style_m, subset=['Estado'])
+                    .format({
+                        'Cajas Prod.': '{:,.0f}', 'Cons. Teórico': '{:,.2f}', 'Merma Std %': '{:,.1f}',
+                        'Cons. Real': '{:,.2f}', 'Diferencia (Kg)': '{:+,.2f}',
+                        '% Desvío': '{:.2f}%'
+                    }), use_container_width=True, height=600
+                )
+                b = io.BytesIO()
+                with pd.ExcelWriter(b) as w: df_final.to_excel(w, index=False)
+                st.download_button("📥 Excel Materiales", b.getvalue(), "Reporte_Mat.xlsx")
 
-        with tab3:
-            st.write("### 🕵️ Diagnóstico de Cruce")
-            check_order = st.text_input("Buscar Orden (ej: 202467):")
-            
-            c_d1, c_d2 = st.columns(2)
-            with c_d1:
-                st.write("**Producción (Limpio):**")
-                # SEGURIDAD ANTI-KEYERROR
-                if 'KEY' in debug_prod.columns and '_Sys_Hecha' in debug_prod.columns:
-                    if check_order:
-                        st.dataframe(debug_prod[debug_prod['KEY'].str.contains(check_order)])
+            with tab2:
+                df_show_t = df_t[abs(df_t['Diff_Hr']) > 0.05].copy()
+                cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Hr':'Diferencia'}
+                df_show_t = df_show_t.rename(columns=cols_t)
+                
+                def style_t(val):
+                    return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
+                
+                st.dataframe(
+                    df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
+                    .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
+                    use_container_width=True
+                )
+
+            with tab3:
+                st.write("### 🕵️ Diagnóstico de Cruce")
+                check_order = st.text_input("Buscar Orden (ej: 202467):")
+                
+                c_d1, c_d2 = st.columns(2)
+                with c_d1:
+                    st.write("**Producción (Limpio):**")
+                    if not debug_prod.empty:
+                        if check_order:
+                            st.dataframe(debug_prod[debug_prod['KEY'].str.contains(check_order)])
+                        else:
+                            st.dataframe(debug_prod.head())
                     else:
-                        st.dataframe(debug_prod.head())
-                else:
-                    st.error("Datos de debug no disponibles. Procesa de nuevo.")
+                        st.warning("Datos de debug no disponibles.")
 
-            with c_d2:
-                st.write("**Materiales (Limpio):**")
-                if 'KEY' in debug_mat.columns and '_Sys_Nec' in debug_mat.columns:
-                    if check_order:
-                        st.dataframe(debug_mat[debug_mat['KEY'].str.contains(check_order)])
-                    else:
-                        st.dataframe(debug_mat.head())
-                else:
-                    st.error("Datos de debug no disponibles.")
+                with c_d2:
+                    st.write("**Materiales (Limpio):**")
+                    if not debug_mat.empty:
+                        if check_order:
+                            st.dataframe(debug_mat[debug_mat['KEY'].str.contains(check_order)])
+                        else:
+                            st.dataframe(debug_mat.head())
 
 else:
     st.info("Carga archivos para empezar.")
