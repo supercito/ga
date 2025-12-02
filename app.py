@@ -77,7 +77,7 @@ def index_col(df, keywords):
 # --- SIDEBAR (CON LOGO) ---
 try:
     # width=250 define el tamaño en píxeles. Cámbialo si lo quieres más grande o chico.
-    st.sidebar.image("logo.png", width=250) 
+    st.sidebar.image("logo.png", width=150) 
 except:
     st.sidebar.warning("Falta archivo 'logo.png'.")
 
