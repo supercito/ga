@@ -5,7 +5,7 @@ import numpy as np
 import re
 
 # --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Control Producción Pro", layout="wide", page_icon="🏭")
+st.set_page_config(page_title="Control Producción Final", layout="wide", page_icon="🏭")
 st.title("🏭 Dashboard de Control: Merma Dinámica")
 st.markdown("Ahora la merma se lee directamente del archivo de materiales.")
 
@@ -27,24 +27,13 @@ def cargar_excel_simple(file):
     except: return None
 
 def clean_key(val):
-    """
-    LIMPIEZA NUCLEAR DE LLAVES:
-    Intenta extraer solo los números para garantizar que '00202467' sea igual a '202467'.
-    """
+    """LIMPIEZA NUCLEAR DE LLAVES"""
     val = str(val).strip()
-    # Si tiene punto decimal, lo quitamos antes de nada (202467.0 -> 202467)
-    if '.' in val:
-        val = val.split('.')[0]
-    
-    # Intentamos sacar solo dígitos
+    if '.' in val: val = val.split('.')[0]
     digits = re.findall(r'\d+', val)
     if digits:
-        # Unimos los dígitos y convertimos a int para matar ceros a la izquierda
-        # Luego volvemos a string para usar como key
         num_limpio = "".join(digits)
         return str(int(num_limpio))
-    
-    # Si es alfanumérico puro, devolvemos limpio
     return val.upper()
 
 def clean_num(val):
@@ -84,7 +73,6 @@ if f_mat and f_prod and f_real and f_sap_t:
     st.divider()
     st.subheader("🛠️ Mapeo de Columnas")
     
-    # Usamos container para organizar mejor
     c1, c2, c3, c4 = st.columns(4)
     
     with c1:
@@ -93,7 +81,6 @@ if f_mat and f_prod and f_real and f_sap_t:
         col_m_nec = st.selectbox("Necesaria", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
         col_m_tom = st.selectbox("Real/Tomada", df_mat.columns, index=index_col(df_mat, ['tomada', 'real']), key='mt')
         col_m_desc = st.selectbox("Descripción", df_mat.columns, index=index_col(df_mat, ['texto', 'desc', 'material']), key='md')
-        # NUEVO SELECTOR DE MERMA
         col_m_merma = st.selectbox("Merma/Rechazo %", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
 
     with c2:
@@ -115,7 +102,7 @@ if f_mat and f_prod and f_real and f_sap_t:
     st.divider()
 
     if st.button("🔄 PROCESAR INFORMACIÓN", type="primary"):
-        # 1. Limpieza de LLAVES (NUCLEAR)
+        # 1. Limpieza de LLAVES
         df_mat['KEY'] = df_mat[col_m_ord].apply(clean_key)
         df_prod['KEY'] = df_prod[col_p_ord].apply(clean_key)
         df_real['KEY'] = df_real[col_r_ord].apply(clean_key)
@@ -124,7 +111,6 @@ if f_mat and f_prod and f_real and f_sap_t:
         # 2. Limpieza de VALORES
         df_mat['_Sys_Nec'] = df_mat[col_m_nec].apply(clean_num)
         df_mat['_Sys_Tom'] = df_mat[col_m_tom].apply(clean_num)
-        # NUEVO: Limpiamos la columna de merma del archivo
         df_mat['_Sys_Merma'] = df_mat[col_m_merma].apply(clean_num)
         
         df_prod['_Sys_Hecha'] = df_prod[col_p_hech].apply(clean_num)
@@ -135,23 +121,16 @@ if f_mat and f_prod and f_real and f_sap_t:
         # 3. Agrupar Producción
         prod_g = df_prod.groupby('KEY')[['_Sys_Plan', '_Sys_Hecha']].sum().reset_index()
 
-        # 4. Cruce (Merge) - Usamos LEFT para mantener todos los materiales
+        # 4. Cruce
         df_m = pd.merge(df_mat, prod_g, on='KEY', how='left')
-        
-        # Llenar nulos si no cruzó
         df_m['_Sys_Plan'] = df_m['_Sys_Plan'].fillna(0)
         df_m['_Sys_Hecha'] = df_m['_Sys_Hecha'].fillna(0)
-        df_m['_Origen'] = np.where(df_m['_Sys_Plan'] > 0, 'Cruce OK', 'Sin Prod')
 
-        # 5. CÁLCULOS DINÁMICOS
-        # Coeficiente
+        # 5. Cálculos
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
-        
-        # Teórico (Si hay prod, ajustamos. Si no, usamos el original)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
-        # LÓGICA DE MERMA POR FILA (Divide por 100 asumiendo que el archivo trae enteros ej: 3 para 3%)
-        # Si el archivo trae 0.03, cambia el 100 por 1.
+        # Merma Dinámica (Asumiendo que viene como 3 para 3%, dividimos por 100)
         df_m['Max_Perm'] = df_m['Teorico'] * (1 + (df_m['_Sys_Merma'] / 100))
         
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
@@ -160,8 +139,11 @@ if f_mat and f_prod and f_real and f_sap_t:
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
 
-        # Guardar Session
+        # GUARDAR EN SESSION STATE (Incluyendo las tablas para debug)
         st.session_state['data_mat'] = df_m
+        st.session_state['debug_mat'] = df_mat # Guardamos la tabla con columnas limpias
+        st.session_state['debug_prod'] = df_prod # Guardamos la tabla con columnas limpias
+        
         st.session_state['col_desc_name'] = col_m_desc
         
         # Tiempos
@@ -176,6 +158,11 @@ if f_mat and f_prod and f_real and f_sap_t:
     if st.session_state.get('processed', False):
         df_m = st.session_state['data_mat']
         df_t = st.session_state['data_time']
+        
+        # Recuperamos las tablas de debug desde la memoria para evitar el KeyError
+        debug_prod = st.session_state.get('debug_prod', pd.DataFrame())
+        debug_mat = st.session_state.get('debug_mat', pd.DataFrame())
+        
         col_desc = st.session_state['col_desc_name']
 
         # FILTROS
@@ -195,7 +182,6 @@ if f_mat and f_prod and f_real and f_sap_t:
 
         df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-        # Renombrar con el campo de Merma incluido
         cols_map = {
             'KEY': 'Orden', col_desc: 'Material', 
             '_Sys_Hecha': 'Cajas Prod.', '_Sys_Merma': 'Merma Std %',
@@ -204,7 +190,6 @@ if f_mat and f_prod and f_real and f_sap_t:
             'Pct_Desvio': '% Desvío', 'Estado': 'Estado'
         }
         
-        # Seleccionar solo columnas existentes
         cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
         df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
@@ -244,24 +229,24 @@ if f_mat and f_prod and f_real and f_sap_t:
             )
 
         with tab3:
-            st.write("### ¿Por qué veo ceros en Cajas Producidas?")
-            st.info("La nueva limpieza 'NUCLEAR' debería haberlo arreglado. Busca tu orden aquí:")
+            st.write("### 🕵️ Diagnóstico de Cruce de Datos")
             check_order = st.text_input("Buscar Orden (ej: 202467):")
             
             c_d1, c_d2 = st.columns(2)
             with c_d1:
-                st.write(f"**Archivo Producción (Orden Limpia):**")
+                st.write("**Archivo Producción (Limpio):**")
+                # Aquí usamos la tabla recuperada de memoria
                 if check_order:
-                    st.dataframe(df_prod[df_prod['KEY'].str.contains(check_order)][['KEY', '_Sys_Hecha']])
+                    st.dataframe(debug_prod[debug_prod['KEY'].str.contains(check_order)][['KEY', '_Sys_Hecha']])
                 else:
-                    st.dataframe(df_prod[['KEY', '_Sys_Hecha']].head())
+                    st.dataframe(debug_prod[['KEY', '_Sys_Hecha']].head())
 
             with c_d2:
-                st.write(f"**Archivo Materiales (Orden Limpia):**")
+                st.write("**Archivo Materiales (Limpio):**")
                 if check_order:
-                    st.dataframe(df_mat[df_mat['KEY'].str.contains(check_order)][['KEY', '_Sys_Nec']])
+                    st.dataframe(debug_mat[debug_mat['KEY'].str.contains(check_order)][['KEY', '_Sys_Nec']])
                 else:
-                    st.dataframe(df_mat[['KEY', '_Sys_Nec']].head())
+                    st.dataframe(debug_mat[['KEY', '_Sys_Nec']].head())
 
 else:
     st.info("Carga archivos para empezar.")
