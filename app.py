@@ -9,11 +9,10 @@ st.set_page_config(page_title="Control Producción Final", layout="wide", page_i
 st.title("🏭 Dashboard de Control: Merma Dinámica")
 st.markdown("Ahora la merma se lee directamente del archivo de materiales.")
 
-# --- FUNCIONES DE CARGA Y LIMPIEZA ---
+# --- FUNCIONES ROBUSTAS ---
 def cargar_excel_simple(file):
     if not file: return None
     try:
-        # Detectar automáticamente dónde empieza el encabezado
         df_temp = pd.read_excel(file, header=None, nrows=15)
         max_cols = 0
         header_row = 0
@@ -28,14 +27,13 @@ def cargar_excel_simple(file):
     except: return None
 
 def clean_key(val):
-    """LIMPIEZA NUCLEAR DE LLAVES (Solo números)"""
+    """LIMPIEZA NUCLEAR DE LLAVES"""
     val = str(val).strip()
     if '.' in val: val = val.split('.')[0]
-    # Extraer solo dígitos
     digits = re.findall(r'\d+', val)
     if digits:
         num_limpio = "".join(digits)
-        return str(int(num_limpio)) # int mata los ceros a la izquierda
+        return str(int(num_limpio))
     return val.upper()
 
 def clean_num(val):
@@ -150,17 +148,21 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_t = pd.merge(t_s, t_r, on='KEY', how='outer').fillna(0)
         df_t['Diff_Hr'] = df_t['_Sys_Real'] - df_t['_Sys_Sap']
 
-        # === GUARDADO SEGURO EN SESSION STATE ===
+        # === GUARDADO EN SESSION STATE ===
         st.session_state['data_mat'] = df_m.copy()
         st.session_state['data_time'] = df_t.copy()
+        
+        # Guardar versiones debug
         st.session_state['debug_prod'] = df_prod[['KEY', '_Sys_Hecha']].copy()
         st.session_state['debug_mat'] = df_mat[['KEY', '_Sys_Nec']].copy()
+        
         st.session_state['col_desc_name'] = col_m_desc
         st.session_state['processed'] = True
 
     # --- VISUALIZACIÓN ---
     if st.session_state.get('processed', False):
-        # Recuperación segura con .get()
+        
+        # Recuperar datos de memoria (safe get)
         df_m = st.session_state.get('data_mat', pd.DataFrame())
         df_t = st.session_state.get('data_time', pd.DataFrame())
         debug_prod = st.session_state.get('debug_prod', pd.DataFrame())
@@ -168,7 +170,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         col_desc = st.session_state.get('col_desc_name', 'Material')
 
         if df_m.empty:
-            st.warning("No hay datos procesados. Por favor presiona 'Procesar Información' nuevamente.")
+            st.warning("Datos no disponibles. Procesa de nuevo.")
         else:
             st.divider()
             col_f1, col_f2 = st.columns(2)
@@ -189,7 +191,6 @@ if f_mat and f_prod and f_real and f_sap_t:
 
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-            # Renombrado de Columnas
             cols_map = {
                 'KEY': 'Orden', col_desc: 'Material', 
                 '_Sys_Hecha': 'Cajas Prod.', '_Sys_Merma': 'Merma Std %',
@@ -198,12 +199,10 @@ if f_mat and f_prod and f_real and f_sap_t:
                 'Pct_Desvio': '% Desvío', 'Estado': 'Estado'
             }
             
-            # Filtrar columnas que existen
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
-            # --- MEJORA: ORDENAR POR MATERIAL ---
-            # Si la columna 'Material' existe, ordenamos por ella y luego por Orden
+            # ORDENAR POR MATERIAL (Mejora solicitada)
             if 'Material' in df_final.columns:
                 df_final = df_final.sort_values(by=['Material', 'Orden'], ascending=[True, True])
 
@@ -264,8 +263,7 @@ if f_mat and f_prod and f_real and f_sap_t:
                             st.dataframe(debug_mat[debug_mat['KEY'].str.contains(check_order)])
                         else:
                             st.dataframe(debug_mat.head())
-                else:
-                    st.error("Datos de debug no disponibles.")
-
+                    else:
+                        st.warning("Datos de debug no disponibles.")
 else:
     st.info("Carga archivos para empezar.")
