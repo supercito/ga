@@ -4,15 +4,16 @@ import io
 import numpy as np
 import re
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control Producción Final", layout="wide", page_icon="🏭")
-st.title("🏭 Dashboard de Control: Merma Dinámica")
-st.markdown("Ahora la merma se lee directamente del archivo de materiales.")
+st.title("🏭 Dashboard de Control de Producción")
+st.markdown("Análisis de desviaciones con indicación exacta de corrección en SAP.")
 
-# --- FUNCIONES ROBUSTAS ---
+# --- FUNCIONES DE CARGA Y LIMPIEZA ---
 def cargar_excel_simple(file):
     if not file: return None
     try:
+        # Detectar automáticamente dónde empieza el encabezado
         df_temp = pd.read_excel(file, header=None, nrows=15)
         max_cols = 0
         header_row = 0
@@ -27,7 +28,7 @@ def cargar_excel_simple(file):
     except: return None
 
 def clean_key(val):
-    """LIMPIEZA NUCLEAR DE LLAVES"""
+    """Limpieza profunda de la Orden (quita ceros a la izquierda y caracteres extra)"""
     val = str(val).strip()
     if '.' in val: val = val.split('.')[0]
     digits = re.findall(r'\d+', val)
@@ -55,17 +56,17 @@ def index_col(df, keywords):
         if any(k in col for k in keywords): return i
     return 0
 
-# --- SIDEBAR ---
+# --- BARRA LATERAL ---
 st.sidebar.header("1. Carga de Archivos")
-f_mat = st.sidebar.file_uploader("Materiales", type=["xlsx"])
-f_prod = st.sidebar.file_uploader("Producción", type=["xlsx"])
+f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
+f_prod = st.sidebar.file_uploader("Producción (Excel)", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales", type=["xlsx"])
 f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
 
 # --- LÓGICA PRINCIPAL ---
 if f_mat and f_prod and f_real and f_sap_t:
     
-    # 1. Cargar
+    # 1. Cargar Archivos
     df_mat = cargar_excel_simple(f_mat)
     df_prod = cargar_excel_simple(f_prod)
     df_real = cargar_excel_simple(f_real)
@@ -73,37 +74,44 @@ if f_mat and f_prod and f_real and f_sap_t:
 
     st.divider()
     st.subheader("🛠️ Mapeo de Columnas")
+    st.info("Selecciona la columna correspondiente en cada archivo:")
     
     c1, c2, c3, c4 = st.columns(4)
     
+    # -------------------------------------------------------------------------
+    # NOTA PARA EL USUARIO:
+    # Si quieres cambiar el título que aparece encima del menú (ej: "Orden"),
+    # cambia el texto dentro de st.selectbox("TITULO NUEVO", ...)
+    # -------------------------------------------------------------------------
+    
     with c1:
-        st.info("📦 Materiales")
-        col_m_ord = st.selectbox("Orden", df_mat.columns, index=index_col(df_mat, ['orden']), key='mo')
-        col_m_nec = st.selectbox("Necesaria", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
-        col_m_tom = st.selectbox("Real/Tomada", df_mat.columns, index=index_col(df_mat, ['tomada', 'real']), key='mt')
-        col_m_desc = st.selectbox("Descripción", df_mat.columns, index=index_col(df_mat, ['texto', 'desc', 'material']), key='md')
+        st.markdown("**📦 Materiales**")
+        col_m_ord = st.selectbox("Columna Orden", df_mat.columns, index=index_col(df_mat, ['orden']), key='mo')
+        col_m_nec = st.selectbox("Cant. Necesaria", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
+        col_m_tom = st.selectbox("Cant. Real/Tomada", df_mat.columns, index=index_col(df_mat, ['tomada', 'real']), key='mt')
+        col_m_desc = st.selectbox("Desc. Material", df_mat.columns, index=index_col(df_mat, ['texto', 'desc', 'material']), key='md')
         col_m_merma = st.selectbox("Merma/Rechazo %", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
 
     with c2:
-        st.info("🏭 Producción")
-        col_p_ord = st.selectbox("Orden", df_prod.columns, index=index_col(df_prod, ['orden']), key='po')
+        st.markdown("**🏭 Producción**")
+        col_p_ord = st.selectbox("Columna Orden", df_prod.columns, index=index_col(df_prod, ['orden']), key='po')
         col_p_hech = st.selectbox("Cajas Reales", df_prod.columns, index=index_col(df_prod, ['buena', 'real', 'confirmada']), key='ph')
         col_p_plan = st.selectbox("Cajas Plan", df_prod.columns, index=index_col(df_prod, ['orden', 'plan']), key='pp')
 
     with c3:
-        st.info("⏱️ Tiempos Real")
-        col_r_ord = st.selectbox("Orden", df_real.columns, index=index_col(df_real, ['orden']), key='ro')
-        col_r_val = st.selectbox("Tiempo", df_real.columns, index=index_col(df_real, ['tiempo', 'maquina']), key='rv')
+        st.markdown("**⏱️ Tiempos Real**")
+        col_r_ord = st.selectbox("Columna Orden", df_real.columns, index=index_col(df_real, ['orden']), key='ro')
+        col_r_val = st.selectbox("Tiempo Máquina", df_real.columns, index=index_col(df_real, ['tiempo', 'maquina']), key='rv')
 
     with c4:
-        st.info("⏱️ Tiempos SAP")
-        col_s_ord = st.selectbox("Orden", df_sap_t.columns, index=index_col(df_sap_t, ['orden']), key='so')
-        col_s_val = st.selectbox("Tiempo", df_sap_t.columns, index=index_col(df_sap_t, ['activ', 'notif']), key='sv')
+        st.markdown("**⏱️ Tiempos SAP**")
+        col_s_ord = st.selectbox("Columna Orden", df_sap_t.columns, index=index_col(df_sap_t, ['orden']), key='so')
+        col_s_val = st.selectbox("Tiempo Notificado", df_sap_t.columns, index=index_col(df_sap_t, ['activ', 'notif']), key='sv')
 
     st.divider()
 
-    # BOTÓN PROCESAR
-    if st.button("🔄 PROCESAR INFORMACIÓN", type="primary"):
+    # --- BOTÓN DE PROCESAMIENTO ---
+    if st.button("🚀 CALCULAR DESVÍOS", type="primary"):
         
         # 1. Limpieza de LLAVES
         df_mat['KEY'] = df_mat[col_m_ord].apply(clean_key)
@@ -121,149 +129,183 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_real['_Sys_Real'] = df_real[col_r_val].apply(clean_num)
         df_sap_t['_Sys_Sap'] = df_sap_t[col_s_val].apply(clean_num)
 
-        # 3. Agrupar Producción
+        # 3. Agrupar Producción y Tiempos
         prod_g = df_prod.groupby('KEY')[['_Sys_Plan', '_Sys_Hecha']].sum().reset_index()
+        t_r = df_real.groupby('KEY')['_Sys_Real'].sum().reset_index()
+        t_s = df_sap_t.groupby('KEY')['_Sys_Sap'].sum().reset_index()
 
-        # 4. Cruce Materiales
+        # -------------------------------------------------------
+        # CÁLCULO DE MATERIALES
+        # -------------------------------------------------------
         df_m = pd.merge(df_mat, prod_g, on='KEY', how='left')
         df_m['_Sys_Plan'] = df_m['_Sys_Plan'].fillna(0)
         df_m['_Sys_Hecha'] = df_m['_Sys_Hecha'].fillna(0)
 
-        # 5. Cálculos Dinámicos
+        # Coeficiente (Material por Caja)
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
+        
+        # Consumo Teórico Dinámico (Ajustado a Cajas Reales)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
-        # Merma Dinámica
+        # Máximo Permitido (Teórico + Merma del archivo)
+        # Asumimos que la merma viene como entero (ej: 3 para 3%). Dividimos por 100.
         df_m['Max_Perm'] = df_m['Teorico'] * (1 + (df_m['_Sys_Merma'] / 100))
         
+        # Diferencias
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
         df_m['Pct_Desvio'] = np.where(df_m['Teorico'] > 0, (df_m['Diff_Kg'] / df_m['Teorico'])*100, 0)
         
-        conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
-        df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
+        # --- DETERMINACIÓN DE ACCIÓN EXACTA PARA SAP ---
+        # Si Tomada > Max_Perm -> EXCEDENTE -> Hay que justificar o anular si fue error
+        # Si Tomada < Teorico -> FALTA -> Hay que cargar
+        
+        condiciones = [
+            (df_m['_Sys_Tom'] > df_m['Max_Perm']), # Se pasó
+            (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.99) # Falta (usamos 0.99 para evitar ruido decimal)
+        ]
+        estados = ['EXCEDENTE', 'FALTA CARGAR']
+        df_m['Estado'] = np.select(condiciones, estados, default='OK')
 
-        # 6. Tiempos
-        t_r = df_real.groupby('KEY')['_Sys_Real'].sum().reset_index()
-        t_s = df_sap_t.groupby('KEY')['_Sys_Sap'].sum().reset_index()
+        # Cálculo de cantidad a informar
+        # Si FALTA: Lo que debí usar (Teorico) - Lo que usé
+        # Si SOBRA: Lo que usé - Lo permitido (Max Perm)
+        df_m['Cant_Ajuste'] = np.select(
+            [df_m['Estado'] == 'FALTA CARGAR', df_m['Estado'] == 'EXCEDENTE'],
+            [df_m['Teorico'] - df_m['_Sys_Tom'], df_m['_Sys_Tom'] - df_m['Max_Perm']],
+            default=0
+        )
+        
+        # Texto de Acción
+        df_m['Accion_SAP'] = np.select(
+            [df_m['Estado'] == 'FALTA CARGAR', df_m['Estado'] == 'EXCEDENTE'],
+            ['CARGAR', 'ANULAR / JUSTIF.'],
+            default='-'
+        )
+
+        # -------------------------------------------------------
+        # CÁLCULO DE TIEMPOS
+        # -------------------------------------------------------
         df_t = pd.merge(t_s, t_r, on='KEY', how='outer').fillna(0)
         df_t['Diff_Hr'] = df_t['_Sys_Real'] - df_t['_Sys_Sap']
+        
+        df_t['Accion_Hr'] = np.select(
+            [df_t['Diff_Hr'] > 0.05, df_t['Diff_Hr'] < -0.05],
+            ['CARGAR HORAS', 'ANULAR HORAS'],
+            default='OK'
+        )
 
-        # === GUARDADO EN SESSION STATE ===
+        # GUARDAR RESULTADOS
         st.session_state['data_mat'] = df_m.copy()
         st.session_state['data_time'] = df_t.copy()
-        
-        # Guardar versiones debug
-        st.session_state['debug_prod'] = df_prod[['KEY', '_Sys_Hecha']].copy()
-        st.session_state['debug_mat'] = df_mat[['KEY', '_Sys_Nec']].copy()
-        
         st.session_state['col_desc_name'] = col_m_desc
         st.session_state['processed'] = True
 
     # --- VISUALIZACIÓN ---
     if st.session_state.get('processed', False):
         
-        # Recuperar datos de memoria (safe get)
         df_m = st.session_state.get('data_mat', pd.DataFrame())
         df_t = st.session_state.get('data_time', pd.DataFrame())
-        debug_prod = st.session_state.get('debug_prod', pd.DataFrame())
-        debug_mat = st.session_state.get('debug_mat', pd.DataFrame())
         col_desc = st.session_state.get('col_desc_name', 'Material')
 
         if df_m.empty:
-            st.warning("Datos no disponibles. Procesa de nuevo.")
+            st.warning("No hay datos.")
         else:
             st.divider()
+            st.header("🔍 Resultados y Filtros")
+
+            # --- FILTROS ---
             col_f1, col_f2 = st.columns(2)
             with col_f1:
-                # Filtro Materiales
+                # 1. Filtro Materiales
                 lista_raw = df_m[col_desc].dropna().unique()
                 lista_materiales = sorted([str(x) for x in lista_raw])
-                excluir = st.multiselect("Ignorar materiales:", lista_materiales)
+                excluir = st.multiselect("Ignorar estos materiales:", lista_materiales)
                 if excluir: df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
 
             with col_f2:
-                # Filtro Porcentaje
+                # 2. Filtro Rango %
                 min_v, max_v = df_m['Pct_Desvio'].min(), df_m['Pct_Desvio'].max()
                 if min_v == max_v: min_v -= 1; max_v += 1
                 min_v, max_v = float(min_v), float(max_v)
-                rango = st.slider("Rango Desvío %:", min_v, max_v, (min_v, max_v))
+                rango = st.slider("Filtrar por % Desvío:", min_v, max_v, (min_v, max_v))
                 df_m = df_m[(df_m['Pct_Desvio'] >= rango[0]) & (df_m['Pct_Desvio'] <= rango[1])]
 
+            # Solo mostramos lo que NO es OK
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
+            # Renombrar Columnas (Aquí se definen los títulos finales)
             cols_map = {
-                'KEY': 'Orden', col_desc: 'Material', 
-                '_Sys_Hecha': 'Cajas Prod.', '_Sys_Merma': 'Merma Std %',
+                'KEY': 'Orden', 
+                col_desc: 'Material', 
+                '_Sys_Hecha': 'Cajas Prod.', 
                 'Teorico': 'Cons. Teórico', 
-                '_Sys_Tom': 'Cons. Real', 'Diff_Kg': 'Diferencia (Kg)', 
-                'Pct_Desvio': '% Desvío', 'Estado': 'Estado'
+                '_Sys_Tom': 'Cons. SAP', 
+                'Accion_SAP': 'Acción SAP',
+                'Cant_Ajuste': 'Cant. Ajuste',
+                'Pct_Desvio': '% Desvío'
             }
             
+            # Seleccionar y Renombrar
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
-            # ORDENAR POR MATERIAL (Mejora solicitada)
+            # ORDENAR: Primero por Material, luego por Orden
             if 'Material' in df_final.columns:
                 df_final = df_final.sort_values(by=['Material', 'Orden'], ascending=[True, True])
 
-            tab1, tab2, tab3 = st.tabs(["📦 Materiales", "⏱️ Tiempos", "🕵️ Diagnóstico"])
+            tab1, tab2 = st.tabs(["📦 Materiales a Corregir", "⏱️ Tiempos a Corregir"])
             
             with tab1:
-                st.markdown(f"**Registros:** {len(df_final)}")
+                st.write(f"**{len(df_final)} registros encontrados.**")
+                
+                # Función de color condicional
                 def style_m(val):
-                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
-                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
+                    if val == 'CARGAR': return 'background-color: #fff4cc; color: black; font-weight: bold' # Amarillo
+                    if val == 'ANULAR / JUSTIF.': return 'background-color: #ffcccc; color: black; font-weight: bold' # Rojo
                     return ''
                 
                 st.dataframe(
-                    df_final.style.applymap(style_m, subset=['Estado'])
+                    df_final.style.applymap(style_m, subset=['Acción SAP'])
                     .format({
-                        'Cajas Prod.': '{:,.0f}', 'Cons. Teórico': '{:,.2f}', 'Merma Std %': '{:,.1f}',
-                        'Cons. Real': '{:,.2f}', 'Diferencia (Kg)': '{:+,.2f}',
+                        'Cajas Prod.': '{:,.0f}', 
+                        'Cons. Teórico': '{:,.2f}', 
+                        'Cons. SAP': '{:,.2f}', 
+                        'Cant. Ajuste': '{:,.2f}',
                         '% Desvío': '{:.2f}%'
                     }), use_container_width=True, height=600
                 )
+                
                 b = io.BytesIO()
                 with pd.ExcelWriter(b) as w: df_final.to_excel(w, index=False)
-                st.download_button("📥 Excel Materiales", b.getvalue(), "Reporte_Mat.xlsx")
+                st.download_button("📥 Descargar Reporte Materiales", b.getvalue(), "Ajuste_Materiales.xlsx")
 
             with tab2:
-                df_show_t = df_t[abs(df_t['Diff_Hr']) > 0.05].copy()
-                cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Hr':'Diferencia'}
+                # Filtrar Tiempos OK
+                df_show_t = df_t[df_t['Accion_Hr'] != 'OK'].copy()
+                
+                cols_t = {
+                    'KEY':'Orden', 
+                    '_Sys_Sap':'Horas SAP', 
+                    '_Sys_Real':'Horas Reales', 
+                    'Diff_Hr':'Diferencia',
+                    'Accion_Hr': 'Acción'
+                }
                 df_show_t = df_show_t.rename(columns=cols_t)
                 
                 def style_t(val):
-                    return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
+                    if 'CARGAR' in val: return 'background-color: #fff4cc; color: black'
+                    if 'ANULAR' in val: return 'background-color: #ffcccc; color: black'
+                    return ''
                 
                 st.dataframe(
-                    df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
+                    df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Acción'])
                     .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
                     use_container_width=True
                 )
-
-            with tab3:
-                st.write("### 🕵️ Diagnóstico de Cruce")
-                check_order = st.text_input("Buscar Orden (ej: 202467):")
                 
-                c_d1, c_d2 = st.columns(2)
-                with c_d1:
-                    st.write("**Producción (Limpio):**")
-                    if not debug_prod.empty:
-                        if check_order:
-                            st.dataframe(debug_prod[debug_prod['KEY'].str.contains(check_order)])
-                        else:
-                            st.dataframe(debug_prod.head())
-                    else:
-                        st.warning("Datos de debug no disponibles.")
+                b2 = io.BytesIO()
+                with pd.ExcelWriter(b2) as w: df_show_t.to_excel(w, index=False)
+                st.download_button("📥 Descargar Reporte Tiempos", b2.getvalue(), "Ajuste_Tiempos.xlsx")
 
-                with c_d2:
-                    st.write("**Materiales (Limpio):**")
-                    if not debug_mat.empty:
-                        if check_order:
-                            st.dataframe(debug_mat[debug_mat['KEY'].str.contains(check_order)])
-                        else:
-                            st.dataframe(debug_mat.head())
-                    else:
-                        st.warning("Datos de debug no disponibles.")
 else:
-    st.info("Carga archivos para empezar.")
+    st.info("Por favor, carga los 4 archivos para comenzar.")
