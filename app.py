@@ -191,6 +191,7 @@ if f_mat and f_prod and f_real and f_sap_t:
             st.divider()
             st.header("🔍 Resultados")
             
+            # FILTROS
             col_f1, col_f2 = st.columns(2)
             with col_f1:
                 st.markdown("##### 1. Filtro Materiales")
@@ -201,46 +202,21 @@ if f_mat and f_prod and f_real and f_sap_t:
 
             with col_f2:
                 st.markdown("##### 2. Filtro Doble de Desvío (%)")
+                min_real = float(df_m['Pct_Desvio'].min())
+                max_real = float(df_m['Pct_Desvio'].max())
                 
-                # Calcular límites seguros para los sliders (para que no den error)
-                data_min = float(df_m['Pct_Desvio'].min())
-                data_max = float(df_m['Pct_Desvio'].max())
-                
-                # Asegurar que los límites tengan lógica (min siempre <= 0, max siempre >= 0)
-                lim_neg_min = min(data_min, -1.0) 
-                lim_pos_max = max(data_max, 1.0)
+                # Seguridad de sliders
+                lim_neg_min = min(min_real, -1.0) 
+                lim_pos_max = max(max_real, 1.0)
 
                 col_neg, col_pos = st.columns(2)
-                
                 with col_neg:
-                    # SLIDER NEGATIVO (Rango)
-                    # Permite seleccionar un rango específico de negativos (ej: -50% a -10%)
                     st.markdown("**Rango Negativo (Faltantes)**")
-                    sel_neg = st.slider(
-                        "Selecciona Rango %:",
-                        min_value=lim_neg_min,
-                        max_value=0.0,
-                        value=(lim_neg_min, 0.0), # Por defecto todo el rango negativo
-                        step=0.5,
-                        key="slider_neg"
-                    )
-                
+                    sel_neg = st.slider("Selecciona Rango %:", lim_neg_min, 0.0, (lim_neg_min, 0.0), 0.5, key="s_neg")
                 with col_pos:
-                    # SLIDER POSITIVO (Rango)
-                    # Permite seleccionar un rango específico de positivos (ej: 10% a 100%)
                     st.markdown("**Rango Positivo (Excedentes)**")
-                    sel_pos = st.slider(
-                        "Selecciona Rango %:",
-                        min_value=0.0,
-                        max_value=lim_pos_max,
-                        value=(0.0, lim_pos_max), # Por defecto todo el rango positivo
-                        step=0.5,
-                        key="slider_pos"
-                    )
+                    sel_pos = st.slider("Selecciona Rango %:", 0.0, lim_pos_max, (0.0, lim_pos_max), 0.5, key="s_pos")
                 
-                # LÓGICA DE FILTRADO (UNIÓN DE RANGOS)
-                # Mostramos si el valor está dentro del rango negativo seleccionado
-                # O SI está dentro del rango positivo seleccionado.
                 mask_neg = (df_m['Pct_Desvio'] >= sel_neg[0]) & (df_m['Pct_Desvio'] <= sel_neg[1])
                 mask_pos = (df_m['Pct_Desvio'] >= sel_pos[0]) & (df_m['Pct_Desvio'] <= sel_pos[1])
                 
@@ -248,21 +224,13 @@ if f_mat and f_prod and f_real and f_sap_t:
 
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-            # MAPEO
+            # MAPEO MATERIALES
             cols_map = {
-                'KEY': 'Orden', 
-                col_desc: 'Material', 
-                '_Sys_Hecha': 'Cajas Prod.', 
-                '_Sys_Merma': 'Merma %',             
-                'Cant_Merma_Kg': 'Cant. Merma',      
-                'Teorico': 'Cons. Teórico', 
-                '_Sys_Tom': 'Cons. Real', 
-                'Cant_Ajuste': 'Cant. a Ajustar',    
-                'Estado': 'Estado',
-                'Pct_Desvio': '% Desvío'
+                'KEY': 'Orden', col_desc: 'Material', '_Sys_Hecha': 'Cajas Prod.', 
+                '_Sys_Merma': 'Merma %', 'Cant_Merma_Kg': 'Cant. Merma',      
+                'Teorico': 'Cons. Teórico', '_Sys_Tom': 'Cons. Real', 
+                'Cant_Ajuste': 'Cant. a Ajustar', 'Estado': 'Estado', 'Pct_Desvio': '% Desvío'
             }
-            
-            # Filtramos columnas que existan
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
@@ -271,8 +239,9 @@ if f_mat and f_prod and f_real and f_sap_t:
 
             tab1, tab2 = st.tabs(["📦 Análisis Materiales", "⏱️ Análisis Tiempos"])
             
+            # --- TAB 1: MATERIALES ---
             with tab1:
-                st.write(f"**{len(df_final)} registros mostrados.**")
+                st.write(f"**{len(df_final)} registros encontrados.**")
                 
                 def style_m(val):
                     if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
@@ -282,41 +251,40 @@ if f_mat and f_prod and f_real and f_sap_t:
                 st.dataframe(
                     df_final.style.applymap(style_m, subset=['Estado'])
                     .format({
-                        'Cajas Prod.': '{:,.0f}', 
-                        'Merma %': '{:.1f}%',
-                        'Cant. Merma': '{:,.2f}',
-                        'Cons. Teórico': '{:,.2f}', 
-                        'Cons. Real': '{:,.2f}', 
-                        'Cant. a Ajustar': '{:,.2f}',
-                        '% Desvío': '{:.1f}%'
-                    }), 
-                    use_container_width=True, 
-                    height=600,
-                    hide_index=True # INDICE OCULTO
+                        'Cajas Prod.': '{:,.0f}', 'Merma %': '{:.1f}%', 'Cant. Merma': '{:,.2f}',
+                        'Cons. Teórico': '{:,.2f}', 'Cons. Real': '{:,.2f}', 
+                        'Cant. a Ajustar': '{:,.2f}', '% Desvío': '{:.1f}%'
+                    }), use_container_width=True, height=600, hide_index=True
                 )
-                
                 b = io.BytesIO()
                 with pd.ExcelWriter(b) as w: df_final.to_excel(w, index=False)
                 st.download_button("📥 Descargar Tabla Materiales", b.getvalue(), "Materiales.xlsx")
 
+            # --- TAB 2: TIEMPOS ---
             with tab2:
+                # Filtrar solo errores
                 df_show_t = df_t[abs(df_t['Diff_Hr']) > 0.05].copy()
-                cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Hr':'Diferencia'}
-                df_show_t = df_show_t.rename(columns=cols_t)
                 
-                def style_t(val):
-                    return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
-                
-                st.dataframe(
-                    df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
-                    .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
-                    use_container_width=True,
-                    hide_index=True # INDICE OCULTO
-                )
-                
-                b2 = io.BytesIO()
-                with pd.ExcelWriter(b2) as w: df_show_t.to_excel(w, index=False)
-                st.download_button("📥 Descargar Tabla Tiempos", b2.getvalue(), "Tiempos.xlsx")
+                # --- NUEVA LÓGICA DE MENSAJE DE ÉXITO ---
+                if df_show_t.empty:
+                    st.balloons()
+                    st.success("✅ ¡Excelente! Todos los tiempos coinciden correctamente con SAP. No hay nada para corregir.")
+                else:
+                    cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Hr':'Diferencia'}
+                    df_show_t = df_show_t.rename(columns=cols_t)
+                    
+                    def style_t(val):
+                        return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
+                    
+                    st.dataframe(
+                        df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
+                        .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
+                        use_container_width=True, hide_index=True
+                    )
+                    
+                    b2 = io.BytesIO()
+                    with pd.ExcelWriter(b2) as w: df_show_t.to_excel(w, index=False)
+                    st.download_button("📥 Descargar Tabla Tiempos", b2.getvalue(), "Tiempos.xlsx")
 
 else:
     st.info("Carga los archivos para comenzar.")
