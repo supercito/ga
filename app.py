@@ -265,9 +265,8 @@ if f_mat and f_prod and f_real and f_sap_t:
                 # Filtrar solo errores
                 df_show_t = df_t[abs(df_t['Diff_Hr']) > 0.05].copy()
                 
-                # --- NUEVA LÓGICA DE MENSAJE DE ÉXITO ---
+                # --- MENSAJE DE ÉXITO (SIN GLOBOS) ---
                 if df_show_t.empty:
-                    st.balloons()
                     st.success("✅ ¡Excelente! Todos los tiempos coinciden correctamente con SAP. No hay nada para corregir.")
                 else:
                     cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Hr':'Diferencia'}
