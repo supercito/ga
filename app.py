@@ -56,8 +56,8 @@ def index_col(df, keywords):
 # --- SIDEBAR ---
 st.sidebar.header("1. Carga de Archivos")
 f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
-f_prod = st.sidebar.file_uploader("Producción (Excel)", type=["xlsx"])
-f_real = st.sidebar.file_uploader("Tiempos Reales", type=["xlsx"])
+f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
+f_real = st.sidebar.file_uploader("Tiempos Reales (P&P)", type=["xlsx"])
 f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
 
 # --- LÓGICA PRINCIPAL ---
@@ -78,14 +78,14 @@ if f_mat and f_prod and f_real and f_sap_t:
         col_m_ord = st.selectbox("Orden", df_mat.columns, index=index_col(df_mat, ['orden']), key='mo')
         col_m_nec = st.selectbox("Cant. Necesaria", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
         col_m_tom = st.selectbox("Cant. Real/Tomada", df_mat.columns, index=index_col(df_mat, ['tomada', 'real']), key='mt')
-        col_m_desc = st.selectbox("Descripción", df_mat.columns, index=index_col(df_mat, ['texto', 'desc', 'material']), key='md')
+        col_m_desc = st.selectbox("Descripción", df_mat.columns, index=index_col(df_mat, ['texto', 'breve', 'material']), key='md')
         col_m_merma = st.selectbox("Merma/Rechazo %", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
 
     with c2:
         st.info("🏭 Producción")
         col_p_ord = st.selectbox("Orden", df_prod.columns, index=index_col(df_prod, ['orden']), key='po')
-        col_p_hech = st.selectbox("Cajas Reales", df_prod.columns, index=index_col(df_prod, ['buena', 'real', 'confirmada']), key='ph')
-        col_p_plan = st.selectbox("Cajas Plan", df_prod.columns, index=index_col(df_prod, ['orden', 'plan']), key='pp')
+        col_p_hech = st.selectbox("Cajas Reales", df_prod.columns, index=index_col(df_prod, ['cantidad', 'buena', 'confirmada']), key='ph')
+        col_p_plan = st.selectbox("Cajas Plan", df_prod.columns, index=index_col(df_prod, ['cantidad', 'orden']), key='pp')
 
     with c3:
         st.info("⏱️ Tiempos Real")
