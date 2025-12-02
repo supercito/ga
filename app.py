@@ -7,13 +7,12 @@ import re
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control Producción Final", layout="wide", page_icon="🏭")
 st.title("🏭 Dashboard de Control de Producción")
-st.markdown("Análisis detallado de desvíos de Materiales y Tiempos.")
+st.markdown("Análisis detallado con cálculo de mermas y ajustes sugeridos.")
 
 # --- FUNCIONES DE LIMPIEZA ---
 def cargar_excel_simple(file):
     if not file: return None
     try:
-        # Detectar encabezado automáticamente
         df_temp = pd.read_excel(file, header=None, nrows=15)
         max_cols = 0
         header_row = 0
@@ -28,13 +27,11 @@ def cargar_excel_simple(file):
     except: return None
 
 def clean_key(val):
-    """Limpieza profunda de la Orden (Números puros)"""
     val = str(val).strip()
     if '.' in val: val = val.split('.')[0]
     digits = re.findall(r'\d+', val)
     if digits:
-        num_limpio = "".join(digits)
-        return str(int(num_limpio))
+        return str(int("".join(digits)))
     return val.upper()
 
 def clean_num(val):
@@ -66,7 +63,6 @@ f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
 # --- LÓGICA PRINCIPAL ---
 if f_mat and f_prod and f_real and f_sap_t:
     
-    # 1. Cargar
     df_mat = cargar_excel_simple(f_mat)
     df_prod = cargar_excel_simple(f_prod)
     df_real = cargar_excel_simple(f_real)
@@ -103,7 +99,6 @@ if f_mat and f_prod and f_real and f_sap_t:
 
     st.divider()
 
-    # BOTÓN PROCESAR
     if st.button("🚀 CALCULAR DATOS", type="primary"):
         
         # 1. Limpieza de LLAVES
@@ -122,30 +117,42 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_real['_Sys_Real'] = df_real[col_r_val].apply(clean_num)
         df_sap_t['_Sys_Sap'] = df_sap_t[col_s_val].apply(clean_num)
 
-        # 3. Agrupar Producción
+        # 3. Cruce con Producción
         prod_g = df_prod.groupby('KEY')[['_Sys_Plan', '_Sys_Hecha']].sum().reset_index()
-
-        # ----------------------------------------
-        # CÁLCULOS MATERIALES
-        # ----------------------------------------
         df_m = pd.merge(df_mat, prod_g, on='KEY', how='left')
         df_m['_Sys_Plan'] = df_m['_Sys_Plan'].fillna(0)
         df_m['_Sys_Hecha'] = df_m['_Sys_Hecha'].fillna(0)
 
-        # Coeficiente y Teórico Dinámico
+        # ----------------------------------------
+        # CÁLCULOS MATERIALES
+        # ----------------------------------------
+        
+        # 1. Teórico Dinámico (ajustado a cajas reales)
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
-        # Merma Dinámica
-        df_m['Max_Perm'] = df_m['Teorico'] * (1 + (df_m['_Sys_Merma'] / 100))
+        # 2. Merma Permitida (Kilos)
+        # Calculamos cuántos KG representa el porcentaje de merma
+        df_m['Cant_Merma_Kg'] = df_m['Teorico'] * (df_m['_Sys_Merma'] / 100)
         
-        # Diferencias
+        # 3. Límite Máximo Permitido
+        df_m['Max_Perm'] = df_m['Teorico'] + df_m['Cant_Merma_Kg']
+        
+        # 4. Diferencias y Estado
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
         df_m['Pct_Desvio'] = np.where(df_m['Teorico'] > 0, (df_m['Diff_Kg'] / df_m['Teorico'])*100, 0)
         
-        # Estados
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
+
+        # 5. CANTIDAD A AJUSTAR (NUEVO REQUERIMIENTO)
+        # Si Falta Cargar -> Diferencia entre Teórico y Real
+        # Si Excedente -> Diferencia entre Real y Máximo Permitido
+        df_m['Cant_Ajuste'] = np.select(
+            [df_m['Estado'] == 'FALTA CARGAR', df_m['Estado'] == 'EXCEDENTE'],
+            [df_m['Teorico'] - df_m['_Sys_Tom'], df_m['_Sys_Tom'] - df_m['Max_Perm']],
+            default=0
+        )
 
         # ----------------------------------------
         # CÁLCULOS TIEMPOS
@@ -182,7 +189,6 @@ if f_mat and f_prod and f_real and f_sap_t:
                 if excluir: df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
 
             with col_f2:
-                # Slider Rango %
                 min_v, max_v = df_m['Pct_Desvio'].min(), df_m['Pct_Desvio'].max()
                 if min_v == max_v: min_v -= 1; max_v += 1
                 min_v, max_v = float(min_v), float(max_v)
@@ -192,23 +198,22 @@ if f_mat and f_prod and f_real and f_sap_t:
             # Solo mostrar errores
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-            # --- MAPEO COMPLETO DE COLUMNAS (LO QUE PEDISTE) ---
+            # --- MAPEO DE COLUMNAS DEFINITIVO ---
             cols_map = {
                 'KEY': 'Orden', 
                 col_desc: 'Material', 
-                '_Sys_Hecha': 'Cajas Producidas', 
-                'Teorico': 'Consumo Teórico', 
-                '_Sys_Tom': 'Consumo Real', 
-                'Diff_Kg': 'Diferencia (Kg)', 
-                'Pct_Desvio': '% Desvío', 
+                '_Sys_Hecha': 'Cajas Prod.', 
+                '_Sys_Merma': 'Merma %',             # Muestra el % del archivo
+                'Cant_Merma_Kg': 'Cant. Merma',      # Muestra los Kilos calculados
+                'Teorico': 'Cons. Teórico', 
+                '_Sys_Tom': 'Cons. Real', 
+                'Cant_Ajuste': 'Cant. a Ajustar',    # Muestra cuánto corregir
                 'Estado': 'Estado'
             }
             
-            # Filtrar las que existen y renombrar
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
-            # Ordenar por Material + Orden
             if 'Material' in df_final.columns:
                 df_final = df_final.sort_values(by=['Material', 'Orden'], ascending=[True, True])
 
@@ -218,18 +223,19 @@ if f_mat and f_prod and f_real and f_sap_t:
                 st.write(f"**{len(df_final)} registros encontrados.**")
                 
                 def style_m(val):
-                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black' # Rojo
-                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black' # Amarillo
+                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
+                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
                     return ''
                 
                 st.dataframe(
                     df_final.style.applymap(style_m, subset=['Estado'])
                     .format({
-                        'Cajas Producidas': '{:,.0f}', 
-                        'Consumo Teórico': '{:,.2f}', 
-                        'Consumo Real': '{:,.2f}', 
-                        'Diferencia (Kg)': '{:+,.2f}',
-                        '% Desvío': '{:.2f}%'
+                        'Cajas Prod.': '{:,.0f}', 
+                        'Merma %': '{:.1f}%',
+                        'Cant. Merma': '{:,.2f}',
+                        'Cons. Teórico': '{:,.2f}', 
+                        'Cons. Real': '{:,.2f}', 
+                        'Cant. a Ajustar': '{:,.2f}'
                     }), use_container_width=True, height=600
                 )
                 
