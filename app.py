@@ -92,8 +92,8 @@ if f_mat and f_prod and f_real and f_sap_t:
     with c2:
         st.info("🏭 Producción")
         col_p_ord = st.selectbox("Orden", df_prod.columns, index=index_col(df_prod, ['orden']), key='po')
-        col_p_hech = st.selectbox("Cajas Reales", df_prod.columns, index=index_col(df_prod, ['cantidad buena']), key='ph')
-        col_p_plan = st.selectbox("Cajas Plan", df_prod.columns, index=index_col(df_prod, ['cantidad orden']), key='pp')
+        col_p_hech = st.selectbox("Cantidad buena confirmada", df_prod.columns, index=index_col(df_prod, ['cantidad buena']), key='ph')
+        col_p_plan = st.selectbox("Cantidad orden/plan", df_prod.columns, index=index_col(df_prod, ['cantidad orden']), key='pp')
 
     with c3:
         st.info("⏱️ Tiempos Real")
