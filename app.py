@@ -57,7 +57,7 @@ def index_col(df, keywords):
 # Aquí cargamos el logo. Asegúrate de tener el archivo "logo.png" en la carpeta
 # o cambia "logo.png" por la URL de la imagen.
 try:
-    st.sidebar.image("https://github.com/supercito/ga/blob/main/logo.png", use_container_width=True) 
+    st.sidebar.image("https://grupoayudin.com.ar/wp-content/uploads/2025/08/GrupoAyudinLogo.png", use_container_width=True) 
 except:
     st.sidebar.warning("Sube una imagen llamada 'logo.png' a la carpeta para ver el logo aquí.")
 
