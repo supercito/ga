@@ -6,8 +6,8 @@ import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control Producción Final", layout="wide", page_icon="🏭")
-st.title("🏭 Dashboard de Control de Producción")
-st.markdown("Análisis detallado con cálculo de mermas y ajustes sugeridos.")
+st.title("Control de Producción")
+#st.markdown("Análisis detallado con cálculo de mermas y ajustes sugeridos.")
 
 # --- FUNCIONES DE LIMPIEZA ---
 def cargar_excel_simple(file):
