@@ -160,7 +160,7 @@ if f_mat and f_prod and f_real and f_sap_t:
 
     # --- VISUALIZACIÓN ---
     if st.session_state.get('processed', False):
-        # Recuperación segura con .get() para evitar KeyErrors
+        # Recuperación segura con .get()
         df_m = st.session_state.get('data_mat', pd.DataFrame())
         df_t = st.session_state.get('data_time', pd.DataFrame())
         debug_prod = st.session_state.get('debug_prod', pd.DataFrame())
@@ -183,13 +183,13 @@ if f_mat and f_prod and f_real and f_sap_t:
                 # Filtro Porcentaje
                 min_v, max_v = df_m['Pct_Desvio'].min(), df_m['Pct_Desvio'].max()
                 if min_v == max_v: min_v -= 1; max_v += 1
-                # Asegurar floats
                 min_v, max_v = float(min_v), float(max_v)
                 rango = st.slider("Rango Desvío %:", min_v, max_v, (min_v, max_v))
                 df_m = df_m[(df_m['Pct_Desvio'] >= rango[0]) & (df_m['Pct_Desvio'] <= rango[1])]
 
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
+            # Renombrado de Columnas
             cols_map = {
                 'KEY': 'Orden', col_desc: 'Material', 
                 '_Sys_Hecha': 'Cajas Prod.', '_Sys_Merma': 'Merma Std %',
@@ -201,6 +201,11 @@ if f_mat and f_prod and f_real and f_sap_t:
             # Filtrar columnas que existen
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
+
+            # --- MEJORA: ORDENAR POR MATERIAL ---
+            # Si la columna 'Material' existe, ordenamos por ella y luego por Orden
+            if 'Material' in df_final.columns:
+                df_final = df_final.sort_values(by=['Material', 'Orden'], ascending=[True, True])
 
             tab1, tab2, tab3 = st.tabs(["📦 Materiales", "⏱️ Tiempos", "🕵️ Diagnóstico"])
             
@@ -259,6 +264,8 @@ if f_mat and f_prod and f_real and f_sap_t:
                             st.dataframe(debug_mat[debug_mat['KEY'].str.contains(check_order)])
                         else:
                             st.dataframe(debug_mat.head())
+                else:
+                    st.error("Datos de debug no disponibles.")
 
 else:
     st.info("Carga archivos para empezar.")
