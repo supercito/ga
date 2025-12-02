@@ -6,8 +6,30 @@ import re
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control Producción Final", layout="wide", page_icon="🏭")
-st.title("Control de Producción")
-#st.markdown("Análisis detallado con cálculo de mermas y ajustes sugeridos.")
+
+# --- ESTILOS CSS (PARA LOGO FIJO Y MEJORAS VISUALES) ---
+st.markdown(
+    """
+    <style>
+        /* Hace que la imagen del sidebar se quede fija arriba */
+        [data-testid="stSidebar"] [data-testid="stImage"] {
+            position: sticky;
+            top: 0;
+            z-index: 999;
+            background-color: #f0f2f6;
+            padding-top: 20px;
+            padding-bottom: 10px;
+        }
+        /* Ajuste para que el contenido no quede tapado por el logo */
+        [data-testid="stSidebar"] .block-container {
+            padding-top: 2rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.title("🏭 Control de Producción")
 
 # --- FUNCIONES DE LIMPIEZA ---
 def cargar_excel_simple(file):
@@ -55,14 +77,13 @@ def index_col(df, keywords):
 
 # --- SIDEBAR (CON LOGO) ---
 try:
-    # width=250 define el tamaño en píxeles. Cámbialo si lo quieres más grande o chico.
+    # El CSS arriba se encarga de dejarlo fijo
     st.sidebar.image("logo.png", width=200) 
 except:
-    st.sidebar.warning("Falta archivo 'logo.png'.")
+    pass # Si no hay logo, no muestra error, solo sigue
 
 st.sidebar.header("1. Carga de Archivos")
-# ... el resto sigue igual
-# ... el resto sigue igual
+
 f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
 f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales (P&P)", type=["xlsx"])
@@ -135,7 +156,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         # CÁLCULOS MATERIALES
         # ----------------------------------------
         
-        # 1. Teórico Dinámico
+        # 1. Teórico Dinámico (ajustado a cajas reales)
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
@@ -188,20 +209,54 @@ if f_mat and f_prod and f_real and f_sap_t:
             # FILTROS
             col_f1, col_f2 = st.columns(2)
             with col_f1:
+                st.markdown("##### 1. Filtro Materiales")
                 lista_raw = df_m[col_desc].dropna().unique()
                 lista_materiales = sorted([str(x) for x in lista_raw])
-                excluir = st.multiselect("Filtrar Materiales (Ignorar):", lista_materiales)
+                excluir = st.multiselect("Ignorar materiales:", lista_materiales)
                 if excluir: df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
 
             with col_f2:
-                # Slider Rango %
-                min_v, max_v = df_m['Pct_Desvio'].min(), df_m['Pct_Desvio'].max()
-                if min_v == max_v: min_v -= 1; max_v += 1
-                min_v, max_v = float(min_v), float(max_v)
-                rango = st.slider("Rango Desvío %:", min_v, max_v, (min_v, max_v))
-                df_m = df_m[(df_m['Pct_Desvio'] >= rango[0]) & (df_m['Pct_Desvio'] <= rango[1])]
+                st.markdown("##### 2. Filtros de Desvío (%)")
+                # Obtenemos los extremos reales de los datos
+                # min_global siempre <= 0, max_global siempre >= 0 para seguridad de sliders
+                min_global = min(0.0, float(df_m['Pct_Desvio'].min()))
+                max_global = max(0.0, float(df_m['Pct_Desvio'].max()))
+                
+                # Dividimos en 2 columnas para los sliders
+                col_neg, col_pos = st.columns(2)
+                
+                with col_neg:
+                    # Slider Negativo: Desde el mínimo real hasta 0
+                    neg_cutoff = st.slider(
+                        "Límite Negativo (Falta):",
+                        min_value=min_global,
+                        max_value=0.0,
+                        value=0.0, # Default: muestra todo
+                        step=0.1,
+                        help="Muestra valores MENORES a este número (más negativos)"
+                    )
+                
+                with col_pos:
+                    # Slider Positivo: Desde 0 hasta el máximo real
+                    pos_cutoff = st.slider(
+                        "Límite Positivo (Exceso):",
+                        min_value=0.0,
+                        max_value=max_global,
+                        value=0.0, # Default: muestra todo
+                        step=0.1,
+                        help="Muestra valores MAYORES a este número"
+                    )
+                
+                # LÓGICA DE FILTRADO (OR)
+                # Queremos ver lo que sea PEOR que el negativo O PEOR que el positivo.
+                # Es decir, excluimos el centro cercano a cero.
+                df_m = df_m[
+                    (df_m['Pct_Desvio'] <= neg_cutoff) | 
+                    (df_m['Pct_Desvio'] >= pos_cutoff)
+                ]
 
-            # Solo mostrar errores
+            # Solo mostrar errores (que no sean OK)
+            # Aunque el slider en 0 ya muestra todo, limpiamos los "OK" técnicos si hubiere
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
             # --- MAPEO DE COLUMNAS DEFINITIVO ---
