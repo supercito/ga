@@ -8,28 +8,7 @@ import re
 st.set_page_config(page_title="Control Producción Final", layout="wide", page_icon="🏭")
 st.title("🏭 Dashboard de Control de Producción")
 st.markdown("Análisis detallado con cálculo de mermas y ajustes sugeridos.")
-# --- ESTILOS CSS PARA LOGO FIJO ---
-st.markdown(
-    """
-    <style>
-        /* Seleccionamos la imagen dentro del Sidebar y la hacemos "pegajosa" */
-        [data-testid="stSidebar"] [data-testid="stImage"] {
-            position: sticky;
-            top: 0;
-            z-index: 999;
-            background-color: #f0f2f6; /* Mismo color de fondo del sidebar por defecto */
-            padding-top: 30px;
-            padding-bottom: 20px;
-        }
-        
-        /* Ajuste para que el título 'Carga de Archivos' no quede pegado o tapado */
-        [data-testid="stSidebar"] .block-container {
-            padding-top: 0rem;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+
 # --- FUNCIONES DE LIMPIEZA ---
 def cargar_excel_simple(file):
     if not file: return None
@@ -75,11 +54,8 @@ def index_col(df, keywords):
     return 0
 
 # --- SIDEBAR (CON LOGO) ---
-try:
     # width=250 define el tamaño en píxeles. Cámbialo si lo quieres más grande o chico.
-    st.sidebar.image("logo.png", width=150) 
-except:
-    st.sidebar.warning("Falta archivo 'logo.png'.")
+    st.sidebar.image("logo.png", width=200) 
 
 st.sidebar.header("1. Carga de Archivos")
 # ... el resto sigue igual
