@@ -191,7 +191,6 @@ if f_mat and f_prod and f_real and f_sap_t:
             st.divider()
             st.header("🔍 Resultados")
             
-            # FILTROS
             col_f1, col_f2 = st.columns(2)
             with col_f1:
                 st.markdown("##### 1. Filtro Materiales")
@@ -201,29 +200,51 @@ if f_mat and f_prod and f_real and f_sap_t:
                 if excluir: df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
 
             with col_f2:
-                st.markdown("##### 2. Rango de Tolerancia (%)")
-                # RANGO SIMPLE: Todo lo que esté DENTRO del slider se OCULTA
-                # Obtenemos extremos para configurar el slider
-                min_real = float(df_m['Pct_Desvio'].min())
-                max_real = float(df_m['Pct_Desvio'].max())
+                st.markdown("##### 2. Filtro Doble de Desvío (%)")
                 
-                # Valores por defecto: ocultar lo que esté entre -1% y +1%
-                val_min = max(min_real, -5.0) 
-                val_max = min(max_real, 5.0)
+                # Calcular límites seguros para los sliders (para que no den error)
+                data_min = float(df_m['Pct_Desvio'].min())
+                data_max = float(df_m['Pct_Desvio'].max())
+                
+                # Asegurar que los límites tengan lógica (min siempre <= 0, max siempre >= 0)
+                lim_neg_min = min(data_min, -1.0) 
+                lim_pos_max = max(data_max, 1.0)
 
-                rango_tol = st.slider(
-                    "Ocultar desvíos entre (Zona Segura):",
-                    min_value=min_real, 
-                    max_value=max_real,
-                    value=(-1.0, 1.0), # Los dos puntos del slider
-                    step=0.1
-                )
+                col_neg, col_pos = st.columns(2)
                 
-                # LÓGICA FILTRO: Mostrar si es MENOR al mínimo O MAYOR al máximo
-                df_m = df_m[
-                    (df_m['Pct_Desvio'] < rango_tol[0]) | 
-                    (df_m['Pct_Desvio'] > rango_tol[1])
-                ]
+                with col_neg:
+                    # SLIDER NEGATIVO (Rango)
+                    # Permite seleccionar un rango específico de negativos (ej: -50% a -10%)
+                    st.markdown("**Rango Negativo (Faltantes)**")
+                    sel_neg = st.slider(
+                        "Selecciona Rango %:",
+                        min_value=lim_neg_min,
+                        max_value=0.0,
+                        value=(lim_neg_min, 0.0), # Por defecto todo el rango negativo
+                        step=0.5,
+                        key="slider_neg"
+                    )
+                
+                with col_pos:
+                    # SLIDER POSITIVO (Rango)
+                    # Permite seleccionar un rango específico de positivos (ej: 10% a 100%)
+                    st.markdown("**Rango Positivo (Excedentes)**")
+                    sel_pos = st.slider(
+                        "Selecciona Rango %:",
+                        min_value=0.0,
+                        max_value=lim_pos_max,
+                        value=(0.0, lim_pos_max), # Por defecto todo el rango positivo
+                        step=0.5,
+                        key="slider_pos"
+                    )
+                
+                # LÓGICA DE FILTRADO (UNIÓN DE RANGOS)
+                # Mostramos si el valor está dentro del rango negativo seleccionado
+                # O SI está dentro del rango positivo seleccionado.
+                mask_neg = (df_m['Pct_Desvio'] >= sel_neg[0]) & (df_m['Pct_Desvio'] <= sel_neg[1])
+                mask_pos = (df_m['Pct_Desvio'] >= sel_pos[0]) & (df_m['Pct_Desvio'] <= sel_pos[1])
+                
+                df_m = df_m[mask_neg | mask_pos]
 
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
@@ -237,8 +258,11 @@ if f_mat and f_prod and f_real and f_sap_t:
                 'Teorico': 'Cons. Teórico', 
                 '_Sys_Tom': 'Cons. Real', 
                 'Cant_Ajuste': 'Cant. a Ajustar',    
-                'Estado': 'Estado'
+                'Estado': 'Estado',
+                'Pct_Desvio': '% Desvío'
             }
+            
+            # Filtramos columnas que existan
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
@@ -248,14 +272,13 @@ if f_mat and f_prod and f_real and f_sap_t:
             tab1, tab2 = st.tabs(["📦 Análisis Materiales", "⏱️ Análisis Tiempos"])
             
             with tab1:
-                st.write(f"**{len(df_final)} registros encontrados (fuera de tolerancia).**")
+                st.write(f"**{len(df_final)} registros mostrados.**")
                 
                 def style_m(val):
                     if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
                     if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
                     return ''
                 
-                # AQUÍ ESTÁ EL CAMBIO: hide_index=True
                 st.dataframe(
                     df_final.style.applymap(style_m, subset=['Estado'])
                     .format({
@@ -264,11 +287,12 @@ if f_mat and f_prod and f_real and f_sap_t:
                         'Cant. Merma': '{:,.2f}',
                         'Cons. Teórico': '{:,.2f}', 
                         'Cons. Real': '{:,.2f}', 
-                        'Cant. a Ajustar': '{:,.2f}'
+                        'Cant. a Ajustar': '{:,.2f}',
+                        '% Desvío': '{:.1f}%'
                     }), 
                     use_container_width=True, 
                     height=600,
-                    hide_index=True  # <--- ESTO QUITA LA PRIMERA COLUMNA DE NÚMEROS
+                    hide_index=True # INDICE OCULTO
                 )
                 
                 b = io.BytesIO()
@@ -283,12 +307,11 @@ if f_mat and f_prod and f_real and f_sap_t:
                 def style_t(val):
                     return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
                 
-                # AQUÍ TAMBIÉN: hide_index=True
                 st.dataframe(
                     df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
                     .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
                     use_container_width=True,
-                    hide_index=True # <--- QUITA EL ÍNDICE
+                    hide_index=True # INDICE OCULTO
                 )
                 
                 b2 = io.BytesIO()
