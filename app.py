@@ -7,11 +7,11 @@ import re
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control Producción Final", layout="wide", page_icon="🏭")
 
-# --- ESTILOS CSS (PARA LOGO FIJO Y MEJORAS VISUALES) ---
+# --- ESTILOS CSS ---
 st.markdown(
     """
     <style>
-        /* Hace que la imagen del sidebar se quede fija arriba */
+        /* Logo Fijo en Sidebar */
         [data-testid="stSidebar"] [data-testid="stImage"] {
             position: sticky;
             top: 0;
@@ -20,7 +20,6 @@ st.markdown(
             padding-top: 20px;
             padding-bottom: 10px;
         }
-        /* Ajuste para que el contenido no quede tapado por el logo */
         [data-testid="stSidebar"] .block-container {
             padding-top: 2rem;
         }
@@ -31,7 +30,7 @@ st.markdown(
 
 st.title("🏭 Control de Producción")
 
-# --- FUNCIONES DE LIMPIEZA ---
+# --- FUNCIONES ---
 def cargar_excel_simple(file):
     if not file: return None
     try:
@@ -75,12 +74,11 @@ def index_col(df, keywords):
         if any(k in col for k in keywords): return i
     return 0
 
-# --- SIDEBAR (CON LOGO) ---
+# --- SIDEBAR ---
 try:
-    # El CSS arriba se encarga de dejarlo fijo
     st.sidebar.image("logo.png", width=200) 
 except:
-    pass # Si no hay logo, no muestra error, solo sigue
+    pass 
 
 st.sidebar.header("1. Carga de Archivos")
 
@@ -130,13 +128,13 @@ if f_mat and f_prod and f_real and f_sap_t:
 
     if st.button("🚀 CALCULAR DATOS", type="primary"):
         
-        # 1. Limpieza de LLAVES
+        # LIMPIEZA
         df_mat['KEY'] = df_mat[col_m_ord].apply(clean_key)
         df_prod['KEY'] = df_prod[col_p_ord].apply(clean_key)
         df_real['KEY'] = df_real[col_r_ord].apply(clean_key)
         df_sap_t['KEY'] = df_sap_t[col_s_ord].apply(clean_key)
 
-        # 2. Limpieza de VALORES
+        # VALORES
         df_mat['_Sys_Nec'] = df_mat[col_m_nec].apply(clean_num)
         df_mat['_Sys_Tom'] = df_mat[col_m_tom].apply(clean_num)
         df_mat['_Sys_Merma'] = df_mat[col_m_merma].apply(clean_num)
@@ -146,49 +144,36 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_real['_Sys_Real'] = df_real[col_r_val].apply(clean_num)
         df_sap_t['_Sys_Sap'] = df_sap_t[col_s_val].apply(clean_num)
 
-        # 3. Cruce con Producción
+        # CRUCE
         prod_g = df_prod.groupby('KEY')[['_Sys_Plan', '_Sys_Hecha']].sum().reset_index()
         df_m = pd.merge(df_mat, prod_g, on='KEY', how='left')
         df_m['_Sys_Plan'] = df_m['_Sys_Plan'].fillna(0)
         df_m['_Sys_Hecha'] = df_m['_Sys_Hecha'].fillna(0)
 
-        # ----------------------------------------
-        # CÁLCULOS MATERIALES
-        # ----------------------------------------
-        
-        # 1. Teórico Dinámico (ajustado a cajas reales)
+        # CÁLCULOS MAT
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
-        # 2. Merma Permitida (Kilos)
         df_m['Cant_Merma_Kg'] = df_m['Teorico'] * (df_m['_Sys_Merma'] / 100)
-        
-        # 3. Límite Máximo Permitido
         df_m['Max_Perm'] = df_m['Teorico'] + df_m['Cant_Merma_Kg']
-        
-        # 4. Diferencias y Estado
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
         df_m['Pct_Desvio'] = np.where(df_m['Teorico'] > 0, (df_m['Diff_Kg'] / df_m['Teorico'])*100, 0)
         
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
 
-        # 5. Cantidad a Ajustar
         df_m['Cant_Ajuste'] = np.select(
             [df_m['Estado'] == 'FALTA CARGAR', df_m['Estado'] == 'EXCEDENTE'],
             [df_m['Teorico'] - df_m['_Sys_Tom'], df_m['_Sys_Tom'] - df_m['Max_Perm']],
             default=0
         )
 
-        # ----------------------------------------
         # CÁLCULOS TIEMPOS
-        # ----------------------------------------
         t_r = df_real.groupby('KEY')['_Sys_Real'].sum().reset_index()
         t_s = df_sap_t.groupby('KEY')['_Sys_Sap'].sum().reset_index()
         df_t = pd.merge(t_s, t_r, on='KEY', how='outer').fillna(0)
         df_t['Diff_Hr'] = df_t['_Sys_Real'] - df_t['_Sys_Sap']
 
-        # Guardar en memoria
         st.session_state['data_mat'] = df_m.copy()
         st.session_state['data_time'] = df_t.copy()
         st.session_state['col_desc_name'] = col_m_desc
@@ -216,50 +201,33 @@ if f_mat and f_prod and f_real and f_sap_t:
                 if excluir: df_m = df_m[~df_m[col_desc].astype(str).isin(excluir)]
 
             with col_f2:
-                st.markdown("##### 2. Filtros de Desvío (%)")
-                # Obtenemos los extremos reales de los datos
-                # min_global siempre <= 0, max_global siempre >= 0 para seguridad de sliders
-                min_global = min(0.0, float(df_m['Pct_Desvio'].min()))
-                max_global = max(0.0, float(df_m['Pct_Desvio'].max()))
+                st.markdown("##### 2. Rango de Tolerancia (%)")
+                # RANGO SIMPLE: Todo lo que esté DENTRO del slider se OCULTA
+                # Obtenemos extremos para configurar el slider
+                min_real = float(df_m['Pct_Desvio'].min())
+                max_real = float(df_m['Pct_Desvio'].max())
                 
-                # Dividimos en 2 columnas para los sliders
-                col_neg, col_pos = st.columns(2)
+                # Valores por defecto: ocultar lo que esté entre -1% y +1%
+                val_min = max(min_real, -5.0) 
+                val_max = min(max_real, 5.0)
+
+                rango_tol = st.slider(
+                    "Ocultar desvíos entre (Zona Segura):",
+                    min_value=min_real, 
+                    max_value=max_real,
+                    value=(-1.0, 1.0), # Los dos puntos del slider
+                    step=0.1
+                )
                 
-                with col_neg:
-                    # Slider Negativo: Desde el mínimo real hasta 0
-                    neg_cutoff = st.slider(
-                        "Límite Negativo (Falta):",
-                        min_value=min_global,
-                        max_value=0.0,
-                        value=0.0, # Default: muestra todo
-                        step=0.1,
-                        help="Muestra valores MENORES a este número (más negativos)"
-                    )
-                
-                with col_pos:
-                    # Slider Positivo: Desde 0 hasta el máximo real
-                    pos_cutoff = st.slider(
-                        "Límite Positivo (Exceso):",
-                        min_value=0.0,
-                        max_value=max_global,
-                        value=0.0, # Default: muestra todo
-                        step=0.1,
-                        help="Muestra valores MAYORES a este número"
-                    )
-                
-                # LÓGICA DE FILTRADO (OR)
-                # Queremos ver lo que sea PEOR que el negativo O PEOR que el positivo.
-                # Es decir, excluimos el centro cercano a cero.
+                # LÓGICA FILTRO: Mostrar si es MENOR al mínimo O MAYOR al máximo
                 df_m = df_m[
-                    (df_m['Pct_Desvio'] <= neg_cutoff) | 
-                    (df_m['Pct_Desvio'] >= pos_cutoff)
+                    (df_m['Pct_Desvio'] < rango_tol[0]) | 
+                    (df_m['Pct_Desvio'] > rango_tol[1])
                 ]
 
-            # Solo mostrar errores (que no sean OK)
-            # Aunque el slider en 0 ya muestra todo, limpiamos los "OK" técnicos si hubiere
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-            # --- MAPEO DE COLUMNAS DEFINITIVO ---
+            # MAPEO
             cols_map = {
                 'KEY': 'Orden', 
                 col_desc: 'Material', 
@@ -271,7 +239,6 @@ if f_mat and f_prod and f_real and f_sap_t:
                 'Cant_Ajuste': 'Cant. a Ajustar',    
                 'Estado': 'Estado'
             }
-            
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
@@ -281,13 +248,14 @@ if f_mat and f_prod and f_real and f_sap_t:
             tab1, tab2 = st.tabs(["📦 Análisis Materiales", "⏱️ Análisis Tiempos"])
             
             with tab1:
-                st.write(f"**{len(df_final)} registros encontrados.**")
+                st.write(f"**{len(df_final)} registros encontrados (fuera de tolerancia).**")
                 
                 def style_m(val):
-                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black' # Rojo
-                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black' # Amarillo
+                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
+                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
                     return ''
                 
+                # AQUÍ ESTÁ EL CAMBIO: hide_index=True
                 st.dataframe(
                     df_final.style.applymap(style_m, subset=['Estado'])
                     .format({
@@ -297,7 +265,10 @@ if f_mat and f_prod and f_real and f_sap_t:
                         'Cons. Teórico': '{:,.2f}', 
                         'Cons. Real': '{:,.2f}', 
                         'Cant. a Ajustar': '{:,.2f}'
-                    }), use_container_width=True, height=600
+                    }), 
+                    use_container_width=True, 
+                    height=600,
+                    hide_index=True  # <--- ESTO QUITA LA PRIMERA COLUMNA DE NÚMEROS
                 )
                 
                 b = io.BytesIO()
@@ -312,10 +283,12 @@ if f_mat and f_prod and f_real and f_sap_t:
                 def style_t(val):
                     return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
                 
+                # AQUÍ TAMBIÉN: hide_index=True
                 st.dataframe(
                     df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
                     .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
-                    use_container_width=True
+                    use_container_width=True,
+                    hide_index=True # <--- QUITA EL ÍNDICE
                 )
                 
                 b2 = io.BytesIO()
