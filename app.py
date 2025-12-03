@@ -85,7 +85,7 @@ st.sidebar.header("1. Carga de Archivos")
 f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
 f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales (P&P)", type=["xlsx"])
-f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
+f_sap_t = st.sidebar.file_uploader("Tiempos informados (SAP)", type=["xlsx"])
 
 # --- LÓGICA PRINCIPAL ---
 if f_mat and f_prod and f_real and f_sap_t:
