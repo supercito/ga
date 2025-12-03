@@ -11,7 +11,7 @@ st.set_page_config(page_title="Control Producción Final", layout="wide", page_i
 st.markdown(
     """
     <style>
-        /* Logo Fijo */
+        /* Logo Fijo en Sidebar */
         [data-testid="stSidebar"] [data-testid="stImage"] {
             position: sticky;
             top: 0;
@@ -22,14 +22,6 @@ st.markdown(
         }
         [data-testid="stSidebar"] .block-container {
             padding-top: 2rem;
-        }
-        
-        /* Estilo para Tooltip Personalizado en la tabla HTML */
-        .tooltip-cell {
-            cursor: help;
-            text-decoration: underline dotted #888;
-            font-weight: bold;
-            color: #31333F;
         }
     </style>
     """,
@@ -81,55 +73,6 @@ def index_col(df, keywords):
     for i, col in enumerate(cols):
         if any(k in col for k in keywords): return i
     return 0
-
-# --- FUNCIÓN NUEVA PARA TABLA CON TOOLTIPS ---
-def crear_tabla_html(df):
-    """Genera una tabla HTML donde la Orden tiene un tooltip con la Descripción"""
-    
-    # Inicio de tabla y encabezados
-    html = '<div style="overflow-x: auto;">'
-    html += '<table style="width:100%; border-collapse: collapse; font-family: sans-serif; font-size: 0.9rem;">'
-    
-    # Header
-    html += '<tr style="background-color: #f0f2f6; text-align: right; border-bottom: 2px solid #ddd;">'
-    for col in df.columns:
-        align = "left" if col in ['Orden', 'Material', 'Estado'] else "right"
-        html += f'<th style="padding: 10px; text-align: {align};">{col}</th>'
-    html += '</tr>'
-
-    # Filas
-    for _, row in df.iterrows():
-        # Color de fondo según estado
-        bg_color = "transparent"
-        if row['Estado'] == 'EXCEDENTE': bg_color = "#ffcccc"
-        elif row['Estado'] == 'FALTA CARGAR': bg_color = "#fff4cc"
-        
-        html += f'<tr style="background-color: {bg_color}; border-bottom: 1px solid #eee;">'
-        
-        for col in df.columns:
-            val = row[col]
-            align = "left" if col in ['Orden', 'Material', 'Estado'] else "right"
-            
-            # --- LÓGICA DEL TOOLTIP ---
-            if col == 'Orden':
-                # El tooltip es la descripción del material
-                tooltip_text = row['Material'] 
-                # Mostramos la Orden con estilo especial
-                cell_content = f'<span class="tooltip-cell" title="{tooltip_text}">{val}</span>'
-            
-            # --- FORMATEO DE NÚMEROS (Igual que en st.dataframe) ---
-            elif isinstance(val, (int, float)):
-                if 'Cajas' in col: cell_content = f"{val:,.0f}"
-                elif '%' in col: cell_content = f"{val:.1f}%"
-                else: cell_content = f"{val:,.2f}"
-            else:
-                cell_content = str(val)
-                
-            html += f'<td style="padding: 8px; text-align: {align};">{cell_content}</td>'
-        html += '</tr>'
-    
-    html += '</table></div>'
-    return html
 
 # --- SIDEBAR ---
 try:
@@ -262,6 +205,7 @@ if f_mat and f_prod and f_real and f_sap_t:
                 min_real = float(df_m['Pct_Desvio'].min())
                 max_real = float(df_m['Pct_Desvio'].max())
                 
+                # Seguridad de sliders
                 lim_neg_min = min(min_real, -1.0) 
                 lim_pos_max = max(max_real, 1.0)
 
@@ -295,17 +239,27 @@ if f_mat and f_prod and f_real and f_sap_t:
 
             tab1, tab2 = st.tabs(["📦 Análisis Materiales", "⏱️ Análisis Tiempos"])
             
-            # --- TAB 1: MATERIALES (HTML CON TOOLTIP) ---
+            # --- TAB 1: MATERIALES ---
             with tab1:
                 st.write(f"**{len(df_final)} registros encontrados.**")
-                st.info("💡 Pasa el mouse sobre el número de **Orden** para ver la descripción del Material.")
                 
-                # Renderizar tabla HTML personalizada
-                html_table = crear_tabla_html(df_final)
-                st.markdown(html_table, unsafe_allow_html=True)
+                def style_m(val):
+                    if val == 'EXCEDENTE': return 'background-color: #ffcccc; color: black'
+                    if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
+                    return ''
                 
-                # Botón descarga
-                st.markdown("<br>", unsafe_allow_html=True)
+                # TABLA NATIVA (RESTAURADA)
+                st.dataframe(
+                    df_final.style.applymap(style_m, subset=['Estado'])
+                    .format({
+                        'Cajas Prod.': '{:,.0f}', 'Merma %': '{:.1f}%', 'Cant. Merma': '{:,.2f}',
+                        'Cons. Teórico': '{:,.2f}', 'Cons. Real': '{:,.2f}', 
+                        'Cant. a Ajustar': '{:,.2f}', '% Desvío': '{:.1f}%'
+                    }), 
+                    use_container_width=True, 
+                    height=600,
+                    hide_index=True
+                )
                 b = io.BytesIO()
                 with pd.ExcelWriter(b) as w: df_final.to_excel(w, index=False)
                 st.download_button("📥 Descargar Tabla Materiales", b.getvalue(), "Materiales.xlsx")
