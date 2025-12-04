@@ -82,10 +82,10 @@ except:
 
 st.sidebar.header("1. Carga de Archivos")
 
-f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
-f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
+f_mat = st.sidebar.file_uploader("Materiales / Componentes (SAP)", type=["xlsx"])
+f_prod = st.sidebar.file_uploader("Producción / Cabeceras (SAP)", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales (P&P)", type=["xlsx"])
-f_sap_t = st.sidebar.file_uploader("Tiempos informados (SAP)", type=["xlsx"])
+f_sap_t = st.sidebar.file_uploader("Tiempos informados / Oper.Fases (SAP)", type=["xlsx"])
 
 # --- LÓGICA PRINCIPAL ---
 if f_mat and f_prod and f_real and f_sap_t:
@@ -101,7 +101,7 @@ if f_mat and f_prod and f_real and f_sap_t:
     c1, c2, c3, c4 = st.columns(4)
     
     with c1:
-        st.info("📦 Materiales")
+        st.info("📦 Materiales / Componentes")
         col_m_ord = st.selectbox("Orden", df_mat.columns, index=index_col(df_mat, ['orden']), key='mo')
         col_m_nec = st.selectbox("Cant. Necesaria", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
         col_m_tom = st.selectbox("Cant. Real/Tomada", df_mat.columns, index=index_col(df_mat, ['tomada', 'real']), key='mt')
@@ -109,18 +109,18 @@ if f_mat and f_prod and f_real and f_sap_t:
         col_m_merma = st.selectbox("Merma/Rechazo %", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
 
     with c2:
-        st.info("🏭 Producción")
+        st.info("🏭 "Producción / Cabeceras")
         col_p_ord = st.selectbox("Orden", df_prod.columns, index=index_col(df_prod, ['orden']), key='po')
         col_p_hech = st.selectbox("Cantidad buena confirmada", df_prod.columns, index=index_col(df_prod, ['cantidad buena']), key='ph')
         col_p_plan = st.selectbox("Cantidad orden/plan", df_prod.columns, index=index_col(df_prod, ['cantidad orden']), key='pp')
 
     with c3:
-        st.info("⏱️ Tiempos Real")
+        st.info("⏱️ Tiempos Real (P&P")
         col_r_ord = st.selectbox("Orden", df_real.columns, index=index_col(df_real, ['orden']), key='ro')
         col_r_val = st.selectbox("Tiempo", df_real.columns, index=index_col(df_real, ['tiempo', 'maquina']), key='rv')
 
     with c4:
-        st.info("⏱️ Tiempos SAP")
+        st.info("⏱️ Tiempos informados / Oper.Fases")
         col_s_ord = st.selectbox("Orden", df_sap_t.columns, index=index_col(df_sap_t, ['orden']), key='so')
         col_s_val = st.selectbox("Tiempo", df_sap_t.columns, index=index_col(df_sap_t, ['activ', 'notif']), key='sv')
 
