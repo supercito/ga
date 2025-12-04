@@ -116,7 +116,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         col_p_plan = st.selectbox("Cantidad orden/plan", df_prod.columns, index=index_col(df_prod, ['cantidad orden']), key='pp')
 
     with c3:
-        st.info("⏱️ Tiempos Real (P&P)")
+        st.info("⏱️ Tiempos Real (P&P)      ")
         col_r_ord = st.selectbox("Orden", df_real.columns, index=index_col(df_real, ['orden']), key='ro')
         col_r_val = st.selectbox("Tiempo", df_real.columns, index=index_col(df_real, ['tiempo', 'maquina']), key='rv')
 
