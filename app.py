@@ -109,7 +109,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         col_m_merma = st.selectbox("Merma/Rechazo %", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
 
     with c2:
-        st.info("🏭 "Producción / Cabeceras")
+        st.info("🏭 Producción / Cabeceras")
         col_p_ord = st.selectbox("Orden", df_prod.columns, index=index_col(df_prod, ['orden']), key='po')
         col_p_hech = st.selectbox("Cantidad buena confirmada", df_prod.columns, index=index_col(df_prod, ['cantidad buena']), key='ph')
         col_p_plan = st.selectbox("Cantidad orden/plan", df_prod.columns, index=index_col(df_prod, ['cantidad orden']), key='pp')
