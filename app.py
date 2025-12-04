@@ -81,6 +81,7 @@ except:
     pass 
 
 st.sidebar.header("1. Carga de Archivos")
+st.sidebar.markdown("Variante POWER.1") 
 
 f_mat = st.sidebar.file_uploader("Materiales / Componentes (SAP)", type=["xlsx"])
 f_prod = st.sidebar.file_uploader("Producción / Cabeceras (SAP)", type=["xlsx"])
