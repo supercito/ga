@@ -91,7 +91,7 @@ except:
 st.sidebar.header("1. Carga de Archivos")
 st.sidebar.caption("variante POWER.1")
 
-f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
+f_mat = st.sidebar.file_uploader("Materiales_ (SAP)", type=["xlsx"])
 f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales (P&P)", type=["xlsx"])
 f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
