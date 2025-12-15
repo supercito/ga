@@ -11,7 +11,15 @@ st.set_page_config(page_title="Control Producción Final", layout="wide", page_i
 st.markdown(
     """
     <style>
-        /* Logo Fijo en Sidebar */
+        /* 1. Ajuste de fuentes global */
+        html, body, [class*="css"] {
+            font-size: 13px; 
+        }
+        h1 { font-size: 1.8rem !important; }
+        h2 { font-size: 1.5rem !important; }
+        h3 { font-size: 1.2rem !important; }
+        
+        /* 2. Logo Fijo en Sidebar */
         [data-testid="stSidebar"] [data-testid="stImage"] {
             position: sticky;
             top: 0;
@@ -81,12 +89,12 @@ except:
     pass 
 
 st.sidebar.header("1. Carga de Archivos")
-st.sidebar.caption("Variante COOISPI: POWER.1") 
+st.sidebar.caption("variante POWER.1")
 
-f_mat = st.sidebar.file_uploader("Materiales / Componentes (SAP)", type=["xlsx"])
-f_prod = st.sidebar.file_uploader("Producción / Cabeceras (SAP)", type=["xlsx"])
+f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
+f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales (P&P)", type=["xlsx"])
-f_sap_t = st.sidebar.file_uploader("Tiempos informados / Oper.Fases (SAP)", type=["xlsx"])
+f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
 
 # --- LÓGICA PRINCIPAL ---
 if f_mat and f_prod and f_real and f_sap_t:
@@ -104,10 +112,10 @@ if f_mat and f_prod and f_real and f_sap_t:
     with c1:
         st.info("📦 Materiales / Componentes")
         col_m_ord = st.selectbox("Orden", df_mat.columns, index=index_col(df_mat, ['orden']), key='mo')
-        col_m_nec = st.selectbox("Cant. Necesaria", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
+        col_m_nec = st.selectbox("Cant. Necesaria (Incl. Merma)", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
         col_m_tom = st.selectbox("Cant. Real/Tomada", df_mat.columns, index=index_col(df_mat, ['tomada', 'real']), key='mt')
         col_m_desc = st.selectbox("Descripción", df_mat.columns, index=index_col(df_mat, ['texto', 'breve']), key='md')
-        col_m_merma = st.selectbox("Merma/Rechazo %", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
+        col_m_merma = st.selectbox("Merma/Rechazo % (Solo Info)", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
 
     with c2:
         st.info("🏭 Producción / Cabeceras")
@@ -116,12 +124,12 @@ if f_mat and f_prod and f_real and f_sap_t:
         col_p_plan = st.selectbox("Cantidad orden/plan", df_prod.columns, index=index_col(df_prod, ['cantidad orden']), key='pp')
 
     with c3:
-        st.info("⏱️ Tiempos Real (P&P)      ")
+        st.info("⏱️ Tiempos Real (P&P)")
         col_r_ord = st.selectbox("Orden", df_real.columns, index=index_col(df_real, ['orden']), key='ro')
         col_r_val = st.selectbox("Tiempo", df_real.columns, index=index_col(df_real, ['tiempo', 'maquina']), key='rv')
 
     with c4:
-        st.info("⏱️ Tiempos informados / Oper.Fases")
+        st.info("⏱️ Tiempos informados (SAP)")
         col_s_ord = st.selectbox("Orden", df_sap_t.columns, index=index_col(df_sap_t, ['orden']), key='so')
         col_s_val = st.selectbox("Tiempo", df_sap_t.columns, index=index_col(df_sap_t, ['activ', 'notif']), key='sv')
 
@@ -151,25 +159,39 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_m['_Sys_Plan'] = df_m['_Sys_Plan'].fillna(0)
         df_m['_Sys_Hecha'] = df_m['_Sys_Hecha'].fillna(0)
 
-        # CÁLCULOS MAT
+        # ----------------------------------------------------
+        # CÁLCULOS MATERIALES (Lógica Simplificada)
+        # ----------------------------------------------------
+        
+        # 1. Coeficiente = (Cant SAP Bruta / Plan SAP)
+        # Nota: Como _Sys_Nec ya tiene la merma, este coeficiente es "Kg Brutos por Caja"
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
+        
+        # 2. Teórico = Coeficiente * Cajas Reales
+        # Esto nos da el total de kilos que deberíamos haber gastado (incluyendo la merma teórica)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
-        df_m['Cant_Merma_Kg'] = df_m['Teorico'] * (df_m['_Sys_Merma'] / 100)
-        df_m['Max_Perm'] = df_m['Teorico'] + df_m['Cant_Merma_Kg']
+        # 3. El Máximo Permitido es igual al Teórico (porque ya incluye merma)
+        df_m['Max_Perm'] = df_m['Teorico']
+        
+        # 4. Diferencia
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
         df_m['Pct_Desvio'] = np.where(df_m['Teorico'] > 0, (df_m['Diff_Kg'] / df_m['Teorico'])*100, 0)
         
+        # 5. Estados
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
 
+        # 6. Cantidad a Ajustar
         df_m['Cant_Ajuste'] = np.select(
             [df_m['Estado'] == 'FALTA CARGAR', df_m['Estado'] == 'EXCEDENTE'],
             [df_m['Teorico'] - df_m['_Sys_Tom'], df_m['_Sys_Tom'] - df_m['Max_Perm']],
             default=0
         )
 
+        # ----------------------------------------------------
         # CÁLCULOS TIEMPOS
+        # ----------------------------------------------------
         t_r = df_real.groupby('KEY')['_Sys_Real'].sum().reset_index()
         t_s = df_sap_t.groupby('KEY')['_Sys_Sap'].sum().reset_index()
         df_t = pd.merge(t_s, t_r, on='KEY', how='outer').fillna(0)
@@ -206,7 +228,6 @@ if f_mat and f_prod and f_real and f_sap_t:
                 min_real = float(df_m['Pct_Desvio'].min())
                 max_real = float(df_m['Pct_Desvio'].max())
                 
-                # Seguridad de sliders
                 lim_neg_min = min(min_real, -1.0) 
                 lim_pos_max = max(max_real, 1.0)
 
@@ -225,12 +246,16 @@ if f_mat and f_prod and f_real and f_sap_t:
 
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-            # MAPEO MATERIALES
+            # MAPEO MATERIALES (Quitamos columna 'Cant. Merma' calculada)
             cols_map = {
-                'KEY': 'Orden', col_desc: 'Material', '_Sys_Hecha': 'Cajas Prod.', 
-                '_Sys_Merma': 'Merma %', 'Cant_Merma_Kg': 'Cant. Merma',      
-                'Teorico': 'Cons. Teórico', '_Sys_Tom': 'Cons. Real', 
-                'Cant_Ajuste': 'Cant. a Ajustar', 'Estado': 'Estado', 'Pct_Desvio': '% Desvío'
+                'KEY': 'Orden', col_desc: 'Material', 
+                '_Sys_Hecha': 'Cajas Prod.', 
+                '_Sys_Merma': 'Merma Std %', # Solo para info
+                'Teorico': 'Cons. Teórico', 
+                '_Sys_Tom': 'Cons. Real', 
+                'Cant_Ajuste': 'Cant. a Ajustar', 
+                'Estado': 'Estado', 
+                'Pct_Desvio': '% Desvío'
             }
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
@@ -249,17 +274,16 @@ if f_mat and f_prod and f_real and f_sap_t:
                     if val == 'FALTA CARGAR': return 'background-color: #fff4cc; color: black'
                     return ''
                 
-                # TABLA NATIVA (RESTAURADA)
                 st.dataframe(
                     df_final.style.applymap(style_m, subset=['Estado'])
                     .format({
-                        'Cajas Prod.': '{:,.0f}', 'Merma %': '{:.1f}%', 'Cant. Merma': '{:,.2f}',
-                        'Cons. Teórico': '{:,.2f}', 'Cons. Real': '{:,.2f}', 
-                        'Cant. a Ajustar': '{:,.2f}', '% Desvío': '{:.1f}%'
-                    }), 
-                    use_container_width=True, 
-                    height=600,
-                    hide_index=True
+                        'Cajas Prod.': '{:,.0f}', 
+                        'Merma Std %': '{:.1f}%', 
+                        'Cons. Teórico': '{:,.2f}', 
+                        'Cons. Real': '{:,.2f}', 
+                        'Cant. a Ajustar': '{:,.2f}', 
+                        '% Desvío': '{:.1f}%'
+                    }), use_container_width=True, height=600, hide_index=True
                 )
                 b = io.BytesIO()
                 with pd.ExcelWriter(b) as w: df_final.to_excel(w, index=False)
@@ -272,20 +296,24 @@ if f_mat and f_prod and f_real and f_sap_t:
                 if df_show_t.empty:
                     st.success("✅ ¡Excelente! Todos los tiempos coinciden correctamente con SAP. No hay nada para corregir.")
                 else:
-                    cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Hr':'Diferencia'}
-                    df_show_t = df_show_t.rename(columns=cols_t)
+                    df_show_t['Diff_Text'] = df_show_t['Diff_Hr'].apply(lambda x: f"{x:+.2f} h ({x/8:+.1f} t)")
+                    cols_t = {'KEY':'Orden', '_Sys_Sap':'Horas SAP', '_Sys_Real':'Horas Reales', 'Diff_Text':'Diferencia (Hs / Turnos)'}
+                    
+                    df_final_t = df_show_t.rename(columns=cols_t)[list(cols_t.values())]
                     
                     def style_t(val):
-                        return 'background-color: #fff4cc; color: black' if val > 0 else 'background-color: #ffcccc; color: black'
+                        if val.startswith('+'): return 'background-color: #fff4cc; color: black'
+                        if val.startswith('-'): return 'background-color: #ffcccc; color: black'
+                        return ''
                     
                     st.dataframe(
-                        df_show_t[list(cols_t.values())].style.applymap(style_t, subset=['Diferencia'])
-                        .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}', 'Diferencia':'{:+,.2f}'}),
+                        df_final_t.style.applymap(style_t, subset=['Diferencia (Hs / Turnos)'])
+                        .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}'}),
                         use_container_width=True, hide_index=True
                     )
                     
                     b2 = io.BytesIO()
-                    with pd.ExcelWriter(b2) as w: df_show_t.to_excel(w, index=False)
+                    with pd.ExcelWriter(b2) as w: df_final_t.to_excel(w, index=False)
                     st.download_button("📥 Descargar Tabla Tiempos", b2.getvalue(), "Tiempos.xlsx")
 
 else:
