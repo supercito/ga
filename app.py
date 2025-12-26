@@ -36,7 +36,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-st.title("Control de Producción")
+st.title("🏭 Control de Producción")
 
 # --- FUNCIONES ---
 def cargar_excel_simple(file):
@@ -91,10 +91,10 @@ except:
 st.sidebar.header("1. Carga de Archivos")
 st.sidebar.caption("variante POWER.1")
 
-f_mat = st.sidebar.file_uploader("Materiales / Componentes (SAP)", type=["xlsx"])
-f_prod = st.sidebar.file_uploader("Producción / Cabeceras (SAP)", type=["xlsx"])
+f_mat = st.sidebar.file_uploader("Materiales (SAP)", type=["xlsx"])
+f_prod = st.sidebar.file_uploader("Producción (SAP)", type=["xlsx"])
 f_real = st.sidebar.file_uploader("Tiempos Reales (P&P)", type=["xlsx"])
-f_sap_t = st.sidebar.file_uploader("Tiempos informados / Oper./Fases (SAP)", type=["xlsx"])
+f_sap_t = st.sidebar.file_uploader("Tiempos SAP", type=["xlsx"])
 
 # --- LÓGICA PRINCIPAL ---
 if f_mat and f_prod and f_real and f_sap_t:
@@ -112,10 +112,12 @@ if f_mat and f_prod and f_real and f_sap_t:
     with c1:
         st.info("📦 Materiales / Componentes")
         col_m_ord = st.selectbox("Orden", df_mat.columns, index=index_col(df_mat, ['orden']), key='mo')
-        col_m_nec = st.selectbox("Cant. Necesaria (Incl. Merma)", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
+        col_m_nec = st.selectbox("Cant. Necesaria", df_mat.columns, index=index_col(df_mat, ['necesaria']), key='mn')
         col_m_tom = st.selectbox("Cant. Real/Tomada", df_mat.columns, index=index_col(df_mat, ['tomada', 'real']), key='mt')
         col_m_desc = st.selectbox("Descripción", df_mat.columns, index=index_col(df_mat, ['texto', 'breve']), key='md')
-        col_m_merma = st.selectbox("Merma/Rechazo % (Solo Info)", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
+        # NUEVO: UNIDAD DE MEDIDA
+        col_m_um = st.selectbox("Unidad Medida (UM)", df_mat.columns, index=index_col(df_mat, ['unidad', 'medida', 'base', 'un']), key='mum')
+        col_m_merma = st.selectbox("Merma % (Info)", df_mat.columns, index=index_col(df_mat, ['rech', 'niv', 'merma', '%']), key='m_merm')
 
     with c2:
         st.info("🏭 Producción / Cabeceras")
@@ -147,6 +149,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_mat['_Sys_Nec'] = df_mat[col_m_nec].apply(clean_num)
         df_mat['_Sys_Tom'] = df_mat[col_m_tom].apply(clean_num)
         df_mat['_Sys_Merma'] = df_mat[col_m_merma].apply(clean_num)
+        # La unidad de medida es texto, no usamos clean_num
         
         df_prod['_Sys_Hecha'] = df_prod[col_p_hech].apply(clean_num)
         df_prod['_Sys_Plan'] = df_prod[col_p_plan].apply(clean_num)
@@ -159,39 +162,32 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_m['_Sys_Plan'] = df_m['_Sys_Plan'].fillna(0)
         df_m['_Sys_Hecha'] = df_m['_Sys_Hecha'].fillna(0)
 
-        # ----------------------------------------------------
-        # CÁLCULOS MATERIALES (Lógica Simplificada)
-        # ----------------------------------------------------
-        
-        # 1. Coeficiente = (Cant SAP Bruta / Plan SAP)
-        # Nota: Como _Sys_Nec ya tiene la merma, este coeficiente es "Kg Brutos por Caja"
+        # CÁLCULOS MATERIALES
+        # Coeficiente (Receta: Kg Brutos por Caja)
         df_m['Coef'] = np.where(df_m['_Sys_Plan'] > 0, df_m['_Sys_Nec'] / df_m['_Sys_Plan'], 0)
         
-        # 2. Teórico = Coeficiente * Cajas Reales
-        # Esto nos da el total de kilos que deberíamos haber gastado (incluyendo la merma teórica)
+        # Teórico (Ajustado a Producción Real)
         df_m['Teorico'] = np.where(df_m['_Sys_Plan'] > 0, df_m['Coef'] * df_m['_Sys_Hecha'], df_m['_Sys_Nec'])
         
-        # 3. El Máximo Permitido es igual al Teórico (porque ya incluye merma)
+        # Max Permitido (Igual a Teórico porque ya incluye merma)
         df_m['Max_Perm'] = df_m['Teorico']
         
-        # 4. Diferencia
+        # Diferencia
         df_m['Diff_Kg'] = df_m['_Sys_Tom'] - df_m['Max_Perm']
         df_m['Pct_Desvio'] = np.where(df_m['Teorico'] > 0, (df_m['Diff_Kg'] / df_m['Teorico'])*100, 0)
         
-        # 5. Estados
+        # Estados
         conds = [(df_m['_Sys_Tom'] > df_m['Max_Perm']), (df_m['_Sys_Tom'] < df_m['Teorico'] * 0.95)]
         df_m['Estado'] = np.select(conds, ['EXCEDENTE', 'FALTA CARGAR'], default='OK')
 
-        # 6. Cantidad a Ajustar
+        # Cantidad a Ajustar
         df_m['Cant_Ajuste'] = np.select(
             [df_m['Estado'] == 'FALTA CARGAR', df_m['Estado'] == 'EXCEDENTE'],
             [df_m['Teorico'] - df_m['_Sys_Tom'], df_m['_Sys_Tom'] - df_m['Max_Perm']],
             default=0
         )
 
-        # ----------------------------------------------------
         # CÁLCULOS TIEMPOS
-        # ----------------------------------------------------
         t_r = df_real.groupby('KEY')['_Sys_Real'].sum().reset_index()
         t_s = df_sap_t.groupby('KEY')['_Sys_Sap'].sum().reset_index()
         df_t = pd.merge(t_s, t_r, on='KEY', how='outer').fillna(0)
@@ -200,6 +196,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         st.session_state['data_mat'] = df_m.copy()
         st.session_state['data_time'] = df_t.copy()
         st.session_state['col_desc_name'] = col_m_desc
+        st.session_state['col_um_name'] = col_m_um # Guardamos nombre col UM
         st.session_state['processed'] = True
 
     # --- VISUALIZACIÓN ---
@@ -207,6 +204,7 @@ if f_mat and f_prod and f_real and f_sap_t:
         df_m = st.session_state.get('data_mat', pd.DataFrame())
         df_t = st.session_state.get('data_time', pd.DataFrame())
         col_desc = st.session_state.get('col_desc_name', 'Material')
+        col_um = st.session_state.get('col_um_name', 'UM')
 
         if df_m.empty:
             st.warning("No hay datos.")
@@ -246,17 +244,20 @@ if f_mat and f_prod and f_real and f_sap_t:
 
             df_show_m = df_m[df_m['Estado'] != 'OK'].copy()
 
-            # MAPEO MATERIALES (Quitamos columna 'Cant. Merma' calculada)
+            # MAPEO MATERIALES (Agregamos UM)
             cols_map = {
-                'KEY': 'Orden', col_desc: 'Material', 
+                'KEY': 'Orden', 
+                col_desc: 'Material', 
+                col_um: 'UM',  # <--- NUEVA COLUMNA
                 '_Sys_Hecha': 'Cajas Prod.', 
-                '_Sys_Merma': 'Merma Std %', # Solo para info
+                '_Sys_Merma': 'Merma Std %', 
                 'Teorico': 'Cons. Teórico', 
                 '_Sys_Tom': 'Cons. Real', 
                 'Cant_Ajuste': 'Cant. a Ajustar', 
                 'Estado': 'Estado', 
                 'Pct_Desvio': '% Desvío'
             }
+            # Filtrar columnas que existen
             cols_finales = [c for c in cols_map.keys() if c in df_show_m.columns]
             df_final = df_show_m[cols_finales].rename(columns=cols_map)
 
