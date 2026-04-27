@@ -276,7 +276,7 @@ if f_mat and f_prod and f_real and f_sap_t:
                     return ''
                 
                 st.dataframe(
-                    df_final.style.applymap(style_m, subset=['Estado'])
+                    df_final.style.map(style_m, subset=['Estado'])
                     .format({
                         'Cajas Prod.': '{:,.0f}', 
                         'Merma Std %': '{:.1f}%', 
@@ -308,7 +308,7 @@ if f_mat and f_prod and f_real and f_sap_t:
                         return ''
                     
                     st.dataframe(
-                        df_final_t.style.applymap(style_t, subset=['Diferencia (Hs / Turnos)'])
+                        df_final_t.style.map(style_t, subset=['Diferencia (Hs / Turnos)'])
                         .format({'Horas SAP':'{:,.2f}', 'Horas Reales':'{:,.2f}'}),
                         use_container_width=True, hide_index=True
                     )
